@@ -3,12 +3,13 @@ Twilio Voice <-> Gemini Live bridge.
 
 Handles:
 - Twilio Media Streams WebSocket (mulaw 8kHz)
-- Audio conversion: mulaw 8kHz ↔ PCM 16kHz (Gemini input) / PCM 24kHz (Gemini output)
+- Audio conversion: mulaw 8kHz <-> PCM 16kHz (Gemini input) / PCM 24kHz (Gemini output)
 - Bridges the two in real-time
+- Pure Python audio conversion (no audioop, works on Python 3.13+)
 """
 
 import asyncio
-import audioop
+import array
 import base64
 import json
 import logging
@@ -16,23 +17,82 @@ import struct
 
 logger = logging.getLogger(__name__)
 
+# ===== Mulaw codec tables (ITU-T G.711) =====
+
+# Mulaw -> Linear PCM16 decode table (256 entries)
+_MULAW_DECODE = array.array("h")  # signed short
+for _i in range(256):
+    _v = ~_i
+    _sign = _v & 0x80
+    _exponent = (_v >> 4) & 0x07
+    _mantissa = _v & 0x0F
+    _sample = ((_mantissa << 3) + 0x84) << _exponent
+    _sample -= 0x84
+    if _sign:
+        _sample = -_sample
+    _MULAW_DECODE.append(max(-32768, min(32767, _sample)))
+
+# Linear PCM16 -> Mulaw encode
+_MULAW_BIAS = 0x84
+_MULAW_CLIP = 32635
+_MULAW_EXP_TABLE = [0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+                     4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+                     5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+                     5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+                     6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+                     6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+                     6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+                     6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+                     7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                     7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                     7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                     7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                     7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                     7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                     7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+                     7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7]
+
+
+def _pcm16_to_mulaw_sample(sample: int) -> int:
+    """Encode one PCM16 sample to mulaw byte."""
+    sign = 0
+    if sample < 0:
+        sign = 0x80
+        sample = -sample
+    if sample > _MULAW_CLIP:
+        sample = _MULAW_CLIP
+    sample += _MULAW_BIAS
+    exponent = _MULAW_EXP_TABLE[(sample >> 7) & 0xFF]
+    mantissa = (sample >> (exponent + 3)) & 0x0F
+    return ~(sign | (exponent << 4) | mantissa) & 0xFF
+
+
+# ===== Audio conversion functions =====
 
 def mulaw_to_pcm16k(mulaw_bytes: bytes) -> bytes:
-    """Convert mulaw 8kHz (Twilio) → PCM 16-bit 16kHz (Gemini input)."""
-    # mulaw → linear PCM 16-bit at 8kHz
-    pcm_8k = audioop.ulaw2lin(mulaw_bytes, 2)
-    # Upsample 8kHz → 16kHz (factor of 2)
-    pcm_16k, _ = audioop.ratecv(pcm_8k, 2, 1, 8000, 16000, None)
-    return pcm_16k
+    """Convert mulaw 8kHz (Twilio) -> PCM 16-bit 16kHz (Gemini input)."""
+    # Decode mulaw to PCM16 at 8kHz
+    samples_8k = [_MULAW_DECODE[b] for b in mulaw_bytes]
+    # Upsample 8kHz -> 16kHz by linear interpolation
+    samples_16k = []
+    for i in range(len(samples_8k)):
+        samples_16k.append(samples_8k[i])
+        if i + 1 < len(samples_8k):
+            samples_16k.append((samples_8k[i] + samples_8k[i + 1]) >> 1)
+        else:
+            samples_16k.append(samples_8k[i])
+    return struct.pack(f"<{len(samples_16k)}h", *samples_16k)
 
 
 def pcm24k_to_mulaw(pcm_bytes: bytes) -> bytes:
-    """Convert PCM 16-bit 24kHz (Gemini output) → mulaw 8kHz (Twilio)."""
-    # Downsample 24kHz → 8kHz (factor of 3)
-    pcm_8k, _ = audioop.ratecv(pcm_bytes, 2, 1, 24000, 8000, None)
-    # Linear PCM → mulaw
-    mulaw = audioop.lin2ulaw(pcm_8k, 2)
-    return mulaw
+    """Convert PCM 16-bit 24kHz (Gemini output) -> mulaw 8kHz (Twilio)."""
+    # Read PCM16 samples
+    n_samples = len(pcm_bytes) // 2
+    samples = struct.unpack(f"<{n_samples}h", pcm_bytes)
+    # Downsample 24kHz -> 8kHz (take every 3rd sample)
+    samples_8k = samples[::3]
+    # Encode to mulaw
+    return bytes(_pcm16_to_mulaw_sample(s) for s in samples_8k)
 
 
 class TwilioMediaBridge:
@@ -112,7 +172,7 @@ class TwilioMediaBridge:
             logger.error(f"Twilio receive error: {e}")
 
     async def run(self):
-        """Run the bridge: Twilio ↔ Gemini."""
+        """Run the bridge: Twilio <-> Gemini."""
         twilio_task = asyncio.create_task(self.handle_twilio_messages())
 
         try:

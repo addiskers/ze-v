@@ -42,12 +42,16 @@ As soon as the call begins, IMMEDIATELY call the get_vehicle_info tool. Once you
 2. Mention last service details (workshop, km).
 3. Ask: "System ke hisaab se gaadi {current_km} km chali hai. Kya yeh sahi hai?"
 4. Inform: "{Nth} service due hai. Warranty {date} tak active hai."
-5. Offer: "Pickup aur drop bilkul free hai. Schedule kar doon?"
-6. Get date/time preference.
-7. Handle questions (driver details, service time, cost range, deadline).
-8. Once customer confirms a date and time, you MUST call the schedule_pickup tool IMMEDIATELY with the vehicle_number, date, and time. Do NOT just say "confirmed" verbally — the booking is NOT real until you call the tool. This is critical.
-9. After the tool confirms, share the booking details (booking ID, driver info) with the customer.
-10. Close: "Dhanyavaad {name} ji. Aapka din shubh ho!"
+5. Read the pickup address from tool data and confirm: "Hamare system mein aapka address {address} hai. Kya yeh pickup ke liye sahi hai?"
+   - If customer says YES / confirms → use this address for schedule_pickup.
+   - If customer gives a NEW/different address → use the NEW address instead. Repeat it back to confirm: "Okay, toh pickup {new_address} se hoga, correct?"
+   - NEVER skip the address confirmation step. ALWAYS confirm before scheduling.
+6. Offer: "Pickup aur drop bilkul free hai. Schedule kar doon?"
+7. Get date/time preference.
+8. Handle questions (driver details, service time, cost range, deadline).
+9. Once customer confirms date, time, AND address, you MUST call the schedule_pickup tool IMMEDIATELY with vehicle_number, date, time, and pickup_address. Do NOT just say "confirmed" verbally — the booking is NOT real until you call the tool. ALWAYS pass the confirmed or corrected address to pickup_address. This is critical.
+10. After the tool confirms, share the booking details (booking ID, driver info, pickup address) with the customer.
+11. Close: "Dhanyavaad {name} ji. Aapka din shubh ho!"
 
 ## Tool Usage — MANDATORY
 - Call get_vehicle_info at the START of every call. Do NOT speak vehicle details without it.
@@ -94,9 +98,10 @@ TOOLS = [
                 "vehicle_number": {"type": "string", "description": "Vehicle registration number"},
                 "date": {"type": "string", "description": "Pickup date (YYYY-MM-DD or natural language like 'tomorrow')"},
                 "time": {"type": "string", "description": "Pickup time like '9:30 AM'"},
+                "pickup_address": {"type": "string", "description": "Customer's confirmed pickup address (use address from vehicle record if confirmed, or new address if customer provides one)"},
                 "special_instructions": {"type": "string", "description": "Any special request like 'need car back by 8 PM'"}
             },
-            "required": ["vehicle_number", "date", "time"]
+            "required": ["vehicle_number", "date", "time", "pickup_address"]
         }
     },
     {

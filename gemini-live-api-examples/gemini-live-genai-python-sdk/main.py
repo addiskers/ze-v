@@ -66,7 +66,8 @@ VEHICLES = {
             "estimated_cost_min": 2500,
             "estimated_cost_max": 3000
         },
-        "pickup_drop_free": True
+        "pickup_drop_free": True,
+        "address": "B-101, Sterling City , Ahmedabad"
     }
 }
 
@@ -82,6 +83,7 @@ def handle_schedule_pickup(**kwargs):
         "pickup_time": kwargs.get("time", "9:30 AM"),
         "driver_name": "Rajesh Kumar",
         "driver_phone": "+919876500001",
+        "pickup_address": kwargs.get("pickup_address", "B-101, Sterling City, Bopal, Ahmedabad"),
         "workshop": "Kataria Automobiles, S.G. Highway, Ahmedabad",
         "special_instructions": kwargs.get("special_instructions", ""),
         "note": "Driver details will be sent via SMS on the morning of pickup."

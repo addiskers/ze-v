@@ -206,7 +206,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # ============ TWILIO VOICE ENDPOINTS ============
 
-@app.post("/twilio/voice")
+@app.api_route("/twilio/voice", methods=["GET", "POST"])
 async def twilio_voice(request: Request):
     """Twilio webhook: when someone calls your Twilio number, this answers."""
     host = request.headers.get("host", "localhost")

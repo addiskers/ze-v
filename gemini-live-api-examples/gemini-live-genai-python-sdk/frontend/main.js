@@ -67,7 +67,8 @@ const geminiClient = new GeminiClient({
   onClose: (e) => {
     console.log("WS Closed:", e);
     setStatus("disconnected", "Disconnected");
-    showSessionEnd();
+    // Delay to allow any in-flight tool_call messages to be processed before rendering summary
+    setTimeout(() => showSessionEnd(), 300);
   },
   onError: (e) => {
     console.error("WS Error:", e);
@@ -564,9 +565,13 @@ function showSessionEnd() {
   const summaryEl = document.getElementById("call-summary");
   if (!summaryEl) return;
 
-  // Determine call outcome
-  const outcome = bookingData ? "Booking Confirmed" : "No Booking Made";
-  const outcomeClass = bookingData ? "outcome-success" : "outcome-neutral";
+  // Determine call outcome — check both bookingData and toolCallsLog as fallback
+  const hasBooking = bookingData || toolCallsLog.some(t => t.name === "schedule_pickup" && t.result && t.result.success);
+  if (!bookingData && hasBooking) {
+    bookingData = toolCallsLog.find(t => t.name === "schedule_pickup").result;
+  }
+  const outcome = hasBooking ? "Booking Confirmed" : "No Booking Made";
+  const outcomeClass = hasBooking ? "outcome-success" : "outcome-neutral";
 
   let html = "";
 

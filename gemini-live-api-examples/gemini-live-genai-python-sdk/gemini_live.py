@@ -235,7 +235,24 @@ class GeminiLive:
                     while True:
                         async for response in session.receive():
                             logger.debug(f"Received response from Gemini: {response}")
-                            
+
+                            # Real token usage for cost tracking (split by modality).
+                            if response.usage_metadata:
+                                um = response.usage_metadata
+                                await event_queue.put({
+                                    "type": "usage",
+                                    "total": um.total_token_count or 0,
+                                    "thoughts": um.thoughts_token_count or 0,
+                                    "prompt_by_modality": [
+                                        (str(d.modality), d.token_count or 0)
+                                        for d in (um.prompt_tokens_details or [])
+                                    ],
+                                    "response_by_modality": [
+                                        (str(d.modality), d.token_count or 0)
+                                        for d in (um.response_tokens_details or [])
+                                    ],
+                                })
+
                             # Log the raw response type for debugging
                             if response.go_away:
                                 logger.warning(f"Received GoAway from Gemini: {response.go_away}")

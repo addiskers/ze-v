@@ -1,3 +1,9 @@
 __pycache__
 .venv
 .env
+
+# Call-log JSON store (runtime data)
+data/
+_serve_data/
+_smoke_data/
+_smoke_test.py

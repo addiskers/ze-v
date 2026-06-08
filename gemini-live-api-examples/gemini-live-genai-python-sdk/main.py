@@ -1,16 +1,23 @@
 import asyncio
 import base64
+import csv
+import io
 import json
 import logging
 import os
+import secrets
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from gemini_live import GeminiLive
 from twilio_handler import TwilioMediaBridge
+
+import pricing
+import store
+from recorder import CallRecorder
 
 # Load environment variables
 load_dotenv()
@@ -27,6 +34,7 @@ MODEL = os.getenv("MODEL", "gemini-3.1-flash-live-preview")
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "+19785715824")
+ANALYTICS_SECRET = os.getenv("ANALYTICS_SECRET", "kataria2026")
 
 # ============ MOCK BACKEND DATA ============
 
@@ -117,6 +125,16 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 
+@app.on_event("startup")
+async def _startup():
+    """Initialize the call store and clean up any calls orphaned by a crash."""
+    try:
+        await store.init()
+        await store.sweep_stale()
+    except Exception as e:
+        logger.error(f"Call store init failed: {e}")
+
+
 @app.get("/")
 async def root():
     return FileResponse("frontend/index.html")
@@ -128,6 +146,9 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
 
     logger.info("WebSocket connection accepted")
+
+    recorder = CallRecorder(model=MODEL)
+    await recorder.open(source="browser")
 
     audio_input_queue = asyncio.Queue()
     video_input_queue = asyncio.Queue()
@@ -226,6 +247,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             await asyncio.sleep(1)
                             should_retry = True
                             break
+                        await recorder.on_event(event)
                         try:
                             await websocket.send_json(event)
                         except RuntimeError:
@@ -250,6 +272,7 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"Error in Gemini session: {type(e).__name__}: {e}\n{traceback.format_exc()}")
     finally:
         receive_task.cancel()
+        await recorder.close()
         try:
             await websocket.close()
         except:
@@ -295,8 +318,20 @@ async def twilio_media_stream(websocket: WebSocket):
         }
     )
 
+    recorder = CallRecorder(model=MODEL)
+
     async def broadcast_event(event):
-        """Send transcript events to all live watchers."""
+        """Send transcript events to all live watchers AND record the call."""
+        # Persist (never let a recorder failure affect the live broadcast).
+        etype = event.get("type")
+        if etype == "call_start":
+            await recorder.open(source="twilio", call_sid=event.get("call_sid") or None,
+                                caller=event.get("caller"))
+        elif etype == "call_end":
+            await recorder.close()
+        else:
+            await recorder.on_event(event)
+
         dead = set()
         for watcher in live_watchers:
             try:
@@ -644,6 +679,617 @@ function addTool(name, result) {
 </script>
 </body>
 </html>"""
+
+
+ADMIN_DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin · Call Analytics</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0a0e17; --card:rgba(17,24,39,0.75); --border:rgba(255,255,255,0.08);
+  --cyan:#00d4ff; --purple:#7c3aed; --green:#10b981; --red:#ef4444; --amber:#f59e0b;
+  --text:#f1f5f9; --muted:#64748b; --secondary:#94a3b8;
+  --mono:'SF Mono',ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;background-image:
+  linear-gradient(rgba(0,212,255,0.03) 1px,transparent 1px),
+  linear-gradient(90deg,rgba(0,212,255,0.03) 1px,transparent 1px);
+  background-size:40px 40px;pointer-events:none;z-index:0;}
+.hidden{display:none !important;}
+a{color:var(--cyan);}
+
+/* ---- login ---- */
+.login-wrap{position:relative;z-index:1;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+.login-card{background:var(--card);backdrop-filter:blur(14px);border:1px solid var(--border);border-radius:18px;padding:34px 30px;width:100%;max-width:380px;text-align:center;}
+.login-card h1{font-size:1.15rem;margin-bottom:6px;}
+.login-card p{color:var(--muted);font-size:0.8rem;margin-bottom:20px;}
+input,select{font-family:inherit;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:10px 12px;font-size:0.85rem;width:100%;outline:none;}
+input:focus,select:focus{border-color:var(--cyan);}
+.btn{font-family:inherit;cursor:pointer;border:none;border-radius:10px;padding:10px 16px;font-size:0.82rem;font-weight:600;color:#04121a;background:var(--cyan);transition:opacity .15s;}
+.btn:hover{opacity:.88;}
+.btn.ghost{background:transparent;border:1px solid var(--border);color:var(--secondary);}
+.login-card .btn{width:100%;margin-top:14px;}
+.err{color:var(--red);font-size:0.75rem;margin-top:10px;min-height:1em;}
+
+/* ---- shell ---- */
+.top-bar{position:sticky;top:0;z-index:10;display:flex;justify-content:space-between;align-items:center;
+  padding:12px 22px;background:rgba(10,14,23,0.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);}
+.brand{font-weight:800;font-size:0.92rem;color:var(--cyan);letter-spacing:.2px;}
+.top-actions{display:flex;align-items:center;gap:10px;}
+.status{display:flex;align-items:center;gap:6px;font-size:0.72rem;color:var(--secondary);}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 2.4s infinite;}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(16,185,129,.4);}50%{opacity:.6;box-shadow:0 0 0 4px rgba(16,185,129,0);}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+@keyframes shimmer{0%{background-position:-400px 0;}100%{background-position:400px 0;}}
+.container{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:22px;}
+.section-title{font-size:0.7rem;text-transform:uppercase;letter-spacing:1.4px;color:var(--muted);margin:26px 4px 12px;}
+
+/* ---- stat cards ---- */
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;animation:fadeIn .25s;}
+.stat .label{font-size:0.66rem;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);}
+.stat .value{font-size:1.5rem;font-weight:800;margin-top:8px;font-family:var(--mono);}
+.stat .sub{font-size:0.68rem;color:var(--secondary);margin-top:4px;}
+.stat.hi .value{color:var(--purple);}
+.stat.cy .value{color:var(--cyan);}
+.stat.gr .value{color:var(--green);}
+
+/* ---- chart + breakdown ---- */
+.row2{display:grid;grid-template-columns:2fr 1fr;gap:14px;}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;}
+.panel h3{font-size:0.8rem;font-weight:600;margin-bottom:14px;color:var(--secondary);}
+#trend svg{width:100%;height:220px;display:block;}
+.brk-row{display:flex;align-items:center;justify-content:space-between;font-size:0.78rem;padding:7px 0;border-bottom:1px solid var(--border);}
+.brk-row:last-child{border-bottom:none;}
+.brk-bar{height:6px;border-radius:3px;background:var(--cyan);margin-top:5px;}
+
+/* ---- filters + table ---- */
+.filters{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px;}
+.filters input,.filters select{width:auto;}
+.filters .grow{flex:1;min-width:160px;}
+.table-scroll{overflow-x:auto;background:var(--card);border:1px solid var(--border);border-radius:14px;}
+table{width:100%;border-collapse:collapse;font-size:0.78rem;min-width:880px;}
+th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--border);white-space:nowrap;}
+th{font-size:0.66rem;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);cursor:pointer;user-select:none;position:sticky;top:0;background:#0d1320;}
+th.num,td.num{text-align:right;font-family:var(--mono);}
+tbody tr{cursor:pointer;transition:background .12s;}
+tbody tr:hover{background:rgba(0,212,255,0.05);}
+.pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:0.66rem;font-weight:600;}
+.pill.completed{background:rgba(16,185,129,.15);color:var(--green);}
+.pill.in_progress{background:rgba(0,212,255,.15);color:var(--cyan);}
+.pill.abandoned,.pill.failed{background:rgba(239,68,68,.15);color:var(--red);}
+.pill.src{background:rgba(124,58,237,.15);color:#b794f6;}
+.est{color:var(--amber);font-size:0.6rem;margin-left:4px;}
+.tick{color:var(--green);font-weight:700;}
+.dash{color:var(--muted);}
+.empty{text-align:center;color:var(--muted);padding:40px 20px;font-size:0.82rem;}
+
+/* ---- drawer ---- */
+#backdrop{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:40;}
+#drawer{position:fixed;top:0;right:0;height:100vh;width:480px;max-width:100%;z-index:50;
+  background:#0c111c;border-left:1px solid var(--border);overflow-y:auto;animation:slideIn .2s ease-out;}
+@keyframes slideIn{from{transform:translateX(100%);}to{transform:translateX(0);}}
+.dh{position:sticky;top:0;background:rgba(12,17,28,.96);backdrop-filter:blur(8px);border-bottom:1px solid var(--border);padding:14px 18px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+.dh .who{font-weight:700;font-size:0.9rem;}
+.dh .meta{font-size:0.7rem;color:var(--muted);margin-top:3px;}
+.dbody{padding:16px 18px;}
+.x{cursor:pointer;color:var(--muted);font-size:1.3rem;line-height:1;background:none;border:none;}
+.cost-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px;}
+.cost-card{border:1px solid var(--border);border-radius:12px;padding:12px;}
+.cost-card.gem{border-color:rgba(124,58,237,.3);}
+.cost-card.tw{border-color:rgba(0,212,255,.3);}
+.cost-card .ct{font-size:0.66rem;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:8px;}
+.cost-card .big{font-size:1.25rem;font-weight:800;font-family:var(--mono);}
+.cost-card.gem .big{color:var(--purple);}
+.cost-card.tw .big{color:var(--cyan);}
+.kv{display:flex;justify-content:space-between;font-size:0.7rem;color:var(--secondary);padding:3px 0;}
+.kv span:last-child{font-family:var(--mono);color:var(--text);}
+.sub-h{font-size:0.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:18px 0 10px;}
+.msg{padding:9px 13px;border-radius:12px;max-width:88%;font-size:0.82rem;line-height:1.5;margin-bottom:7px;animation:fadeIn .2s;}
+.msg .t{display:block;font-size:0.58rem;opacity:.5;font-family:var(--mono);margin-top:3px;}
+.msg.user{margin-left:auto;background:linear-gradient(135deg,rgba(0,212,255,.2),rgba(0,212,255,.08));border:1px solid rgba(0,212,255,.15);}
+.msg.gemini{background:linear-gradient(135deg,rgba(124,58,237,.2),rgba(124,58,237,.08));border:1px solid rgba(124,58,237,.15);}
+.tool{background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:9px 12px;font-size:0.72rem;color:var(--green);margin-bottom:7px;}
+.tool b{font-weight:700;}
+.tool pre{margin-top:5px;color:var(--secondary);font-size:0.66rem;white-space:pre-wrap;word-break:break-word;}
+
+/* ---- toasts + skeleton ---- */
+#toasts{position:fixed;top:14px;right:14px;z-index:80;display:flex;flex-direction:column;gap:8px;}
+.toast{background:var(--card);backdrop-filter:blur(10px);border:1px solid var(--border);border-left-width:3px;border-radius:10px;padding:10px 14px;font-size:0.78rem;animation:fadeIn .2s;min-width:200px;}
+.toast.error{border-left-color:var(--red);}
+.toast.success{border-left-color:var(--green);}
+.toast.info{border-left-color:var(--cyan);}
+.skel{background:linear-gradient(90deg,rgba(255,255,255,.03),rgba(255,255,255,.08),rgba(255,255,255,.03));background-size:800px 100%;animation:shimmer 1.4s infinite;border-radius:8px;height:14px;}
+
+@media(max-width:820px){.row2{grid-template-columns:1fr;}#drawer{width:100%;}}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login" class="login-wrap">
+  <div class="login-card">
+    <h1>Admin · Call Analytics</h1>
+    <p>Enter the admin key to view call logs, transcripts and costing.</p>
+    <input id="keyInput" type="password" placeholder="Admin key" autocomplete="current-password"/>
+    <button class="btn" id="loginBtn">Sign in</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dash" class="hidden">
+  <div class="top-bar">
+    <span class="brand">Admin · Call Analytics</span>
+    <div class="top-actions">
+      <span class="status"><span class="dot"></span><span id="updated">—</span></span>
+      <button class="btn ghost" id="refreshBtn">Refresh costs</button>
+      <button class="btn ghost" id="logoutBtn">Log out</button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="section-title">Project costing</div>
+    <div class="stats" id="stats"></div>
+
+    <div class="section-title">Spend trend</div>
+    <div class="row2">
+      <div class="panel" id="trend"><h3>Cost by day (Gemini + Twilio) &amp; call volume</h3><div id="trendBody"></div></div>
+      <div class="panel"><h3>Breakdown</h3><div id="breakdown"></div></div>
+    </div>
+
+    <div class="section-title">Call logs</div>
+    <div class="filters">
+      <input type="date" id="fromDate" title="From date"/>
+      <input type="date" id="toDate" title="To date"/>
+      <select id="sourceFilter"><option value="">All sources</option><option value="twilio">Phone (Twilio)</option><option value="browser">Browser</option></select>
+      <input class="grow" id="search" placeholder="Search caller / call SID…"/>
+      <button class="btn ghost" id="csvBtn">Export CSV</button>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th data-k="started_at">Time</th>
+          <th data-k="caller">Caller</th>
+          <th data-k="source">Source</th>
+          <th data-k="duration_seconds" class="num">Duration</th>
+          <th data-k="language">Lang</th>
+          <th data-k="status">Status</th>
+          <th data-k="booking_created">Booking</th>
+          <th data-k="gemini_cost_usd" class="num">Gemini $</th>
+          <th data-k="twilio" class="num">Twilio $</th>
+          <th data-k="total_cost_usd" class="num">Total $</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div id="count" class="section-title" style="margin-top:10px;"></div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+const $=(id)=>document.getElementById(id);
+const KEY=()=>localStorage.getItem('admin_key')||'';
+const state={summary:null,calls:[],sort:{k:'started_at',dir:'desc'}};
+
+/* ---------- fetch helper ---------- */
+async function api(path,opts={}){
+  const res=await fetch(path,{...opts,headers:{...(opts.headers||{}),'X-Admin-Key':KEY()}});
+  if(res.status===401){logout();throw new Error('unauthorized');}
+  if(!res.ok)throw new Error('HTTP '+res.status);
+  return res;
+}
+
+/* ---------- auth ---------- */
+function showDash(on){$('login').classList.toggle('hidden',on);$('dash').classList.toggle('hidden',!on);}
+async function login(){
+  const k=$('keyInput').value.trim();
+  if(!k){$('loginErr').textContent='Enter a key';return;}
+  localStorage.setItem('admin_key',k);
+  try{await loadAll();showDash(true);$('loginErr').textContent='';}
+  catch(e){localStorage.removeItem('admin_key');$('loginErr').textContent='Invalid key';}
+}
+function logout(){localStorage.removeItem('admin_key');showDash(false);}
+
+/* ---------- formatting ---------- */
+const fmtUSD=(n)=>(n==null||isNaN(n))?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:4}).format(n);
+const fmtUSD2=(n)=>(n==null||isNaN(n))?'—':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format(n);
+const fmtNum=(n)=>(n==null||isNaN(n))?'—':new Intl.NumberFormat('en-US').format(n);
+const fmtPct=(x)=>(x==null||isNaN(x))?'—':(x*100).toFixed(1)+'%';
+function fmtDur(s){s=s||0;const m=Math.floor(s/60),r=Math.round(s%60);return m+':'+String(r).padStart(2,'0');}
+function fmtDT(iso){if(!iso)return '—';const d=new Date(iso);return d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}
+function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+/* ---------- loaders ---------- */
+async function loadAll(){
+  const [sum,calls]=await Promise.all([
+    api('/api/admin/summary').then(r=>r.json()),
+    api('/api/admin/calls'+filterQS()).then(r=>r.json()),
+  ]);
+  state.summary=sum;state.calls=calls.items||[];
+  renderStats();renderTrend();renderBreakdown();renderRows();
+  $('updated').textContent='Updated '+new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+function filterQS(){
+  const p=new URLSearchParams();
+  if($('fromDate').value)p.set('from',$('fromDate').value);
+  if($('toDate').value)p.set('to',$('toDate').value);
+  if($('sourceFilter').value)p.set('source',$('sourceFilter').value);
+  if($('search').value.trim())p.set('q',$('search').value.trim());
+  const s=p.toString();return s?('?'+s):'';
+}
+async function fetchCalls(){
+  try{const r=await api('/api/admin/calls'+filterQS()).then(r=>r.json());state.calls=r.items||[];renderRows();}
+  catch(e){if(e.message!=='unauthorized')toast('Failed to load calls','error');}
+}
+
+/* ---------- render: stats ---------- */
+function renderStats(){
+  const s=state.summary||{};
+  const cards=[
+    {label:'Total calls',value:fmtNum(s.total_calls),sub:(s.by_source?Object.entries(s.by_source).map(([k,v])=>k+': '+v).join(' · '):'')},
+    {label:'Total minutes',value:(s.total_minutes!=null?s.total_minutes.toFixed(1):'—')},
+    {label:'AI (Gemini) cost',value:fmtUSD(s.gemini_cost_usd),cls:'hi',sub:'real token usage'},
+    {label:'Twilio cost',value:fmtUSD(s.twilio_cost_usd),cls:'cy'},
+    {label:'Total real cost',value:fmtUSD(s.total_cost_usd),cls:'cy'},
+    {label:'Avg cost / call',value:fmtUSD(s.avg_cost_per_call)},
+    {label:'This month',value:fmtUSD2((s.this_month||{}).cost_usd),sub:'proj '+fmtUSD2(s.projected_month_cost)},
+    {label:'Booking conversion',value:fmtPct(s.booking_conversion_rate),cls:'gr',sub:(s.bookings||0)+' bookings'},
+  ];
+  $('stats').innerHTML=cards.map(c=>
+    '<div class="stat '+(c.cls||'')+'"><div class="label">'+c.label+'</div><div class="value">'+c.value+'</div>'+
+    (c.sub?'<div class="sub">'+esc(c.sub)+'</div>':'')+'</div>').join('');
+}
+
+/* ---------- render: trend (inline SVG) ---------- */
+function renderTrend(){
+  const days=(state.summary&&state.summary.by_day)||[];
+  const box=$('trendBody');
+  if(!days.length){box.innerHTML='<div class="empty">No spend data yet</div>';return;}
+  const W=640,H=220,pad={l:46,r:38,t:14,b:26};
+  const iw=W-pad.l-pad.r,ih=H-pad.t-pad.b;
+  const maxCost=Math.max(...days.map(d=>d.cost_usd),0.0001);
+  const maxCalls=Math.max(...days.map(d=>d.calls),1);
+  const n=days.length,bw=Math.max(4,Math.min(46,iw/n*0.6));
+  const x=(i)=>pad.l+(iw/n)*(i+0.5);
+  const yC=(v)=>pad.t+ih-(v/maxCost)*ih;
+  const yN=(v)=>pad.t+ih-(v/maxCalls)*ih;
+  let bars='',line='',dots='',xlabels='';
+  const step=Math.ceil(n/8);
+  days.forEach((d,i)=>{
+    const h=(d.cost_usd/maxCost)*ih;
+    bars+='<rect x="'+(x(i)-bw/2)+'" y="'+(pad.t+ih-h)+'" width="'+bw+'" height="'+h+'" rx="3" fill="url(#g)"><title>'+d.date+' · '+fmtUSD(d.cost_usd)+' · '+d.calls+' calls</title></rect>';
+    line+=(i?' L':'M')+x(i)+' '+yN(d.calls);
+    dots+='<circle cx="'+x(i)+'" cy="'+yN(d.calls)+'" r="3" fill="#7c3aed"/>';
+    if(i%step===0)xlabels+='<text x="'+x(i)+'" y="'+(H-8)+'" fill="#64748b" font-size="9" text-anchor="middle">'+d.date.slice(5)+'</text>';
+  });
+  // y axis (cost) ticks
+  let yticks='';
+  for(let t=0;t<=2;t++){const v=maxCost*t/2,yy=yC(v);
+    yticks+='<line x1="'+pad.l+'" y1="'+yy+'" x2="'+(W-pad.r)+'" y2="'+yy+'" stroke="rgba(255,255,255,0.05)"/>'+
+            '<text x="'+(pad.l-6)+'" y="'+(yy+3)+'" fill="#64748b" font-size="9" text-anchor="end">'+fmtUSD2(v)+'</text>';}
+  box.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
+    '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#00d4ff" stop-opacity="0.9"/><stop offset="1" stop-color="#00d4ff" stop-opacity="0.25"/></linearGradient></defs>'+
+    yticks+bars+'<path d="'+line+'" fill="none" stroke="#7c3aed" stroke-width="2"/>'+dots+xlabels+'</svg>'+
+    '<div style="display:flex;gap:16px;font-size:0.66rem;color:#94a3b8;margin-top:6px;"><span style="color:#00d4ff;">■ cost / day</span><span style="color:#7c3aed;">● calls / day</span></div>';
+}
+
+/* ---------- render: breakdown ---------- */
+function renderBreakdown(){
+  const s=state.summary||{};
+  const g=s.gemini_cost_usd||0,t=s.twilio_cost_usd||0,tot=(g+t)||1;
+  const langs=s.by_language||{};
+  let html='';
+  html+=brkRow('Gemini (AI)',fmtUSD(g),g/tot,'#7c3aed');
+  html+=brkRow('Twilio (telephony)',fmtUSD(t),t/tot,'#00d4ff');
+  html+='<div class="sub-h" style="margin:14px 0 6px;">By language</div>';
+  const le=Object.entries(langs).sort((a,b)=>b[1]-a[1]);
+  if(!le.length)html+='<div class="kv"><span>—</span><span></span></div>';
+  le.forEach(([k,v])=>html+='<div class="kv"><span>'+esc(k)+'</span><span>'+v+'</span></div>');
+  if(s.pending_twilio_price)html+='<div class="kv" style="margin-top:10px;color:#f59e0b;"><span>Pending Twilio price</span><span>'+s.pending_twilio_price+'</span></div>';
+  $('breakdown').innerHTML=html;
+}
+function brkRow(label,val,frac,color){
+  return '<div class="brk-row"><span>'+label+'</span><span style="font-family:var(--mono)">'+val+'</span></div>'+
+    '<div class="brk-bar" style="width:'+Math.max(2,frac*100).toFixed(1)+'%;background:'+color+'"></div>';
+}
+
+/* ---------- render: table ---------- */
+function renderRows(){
+  const tb=$('rows');
+  let rows=[...state.calls];
+  const {k,dir}=state.sort,mul=dir==='asc'?1:-1;
+  rows.sort((a,b)=>{
+    let av=a[k],bv=b[k];
+    if(k==='twilio'){av=(a.twilio||{}).price_usd;bv=(b.twilio||{}).price_usd;}
+    if(av==null)av=-Infinity;if(bv==null)bv=-Infinity;
+    if(typeof av==='string')return av.localeCompare(bv)*mul;
+    return (av-bv)*mul;
+  });
+  $('count').textContent=rows.length+' call'+(rows.length===1?'':'s');
+  if(!rows.length){tb.innerHTML='<tr><td colspan="10"><div class="empty">No calls match your filters</div></td></tr>';return;}
+  tb.innerHTML=rows.map(c=>{
+    const tw=(c.twilio||{}).price_usd;
+    const est=c.cost_estimated?'<span class="est" title="estimated">~</span>':'';
+    return '<tr onclick="openDrawer(\\''+c.id+'\\')">'+
+      '<td>'+fmtDT(c.started_at)+'</td>'+
+      '<td>'+esc(c.caller||(c.source==='browser'?'Web visitor':'—'))+'</td>'+
+      '<td><span class="pill src">'+esc(c.source||'')+'</span></td>'+
+      '<td class="num">'+fmtDur(c.duration_seconds)+'</td>'+
+      '<td>'+esc(c.language||'—')+'</td>'+
+      '<td><span class="pill '+esc(c.status||'')+'">'+esc(c.status||'')+'</span></td>'+
+      '<td>'+(c.booking_created?'<span class="tick">✓</span>':'<span class="dash">—</span>')+'</td>'+
+      '<td class="num">'+fmtUSD(c.gemini_cost_usd)+'</td>'+
+      '<td class="num">'+(tw==null?'<span class="dash">—</span>':fmtUSD(tw))+'</td>'+
+      '<td class="num">'+fmtUSD(c.total_cost_usd)+est+'</td>'+
+    '</tr>';
+  }).join('');
+}
+function sortBy(k){
+  if(state.sort.k===k)state.sort.dir=state.sort.dir==='asc'?'desc':'asc';
+  else state.sort={k,dir:'desc'};
+  renderRows();
+}
+
+/* ---------- drawer ---------- */
+async function openDrawer(id){
+  document.body.insertAdjacentHTML('beforeend','<div id="backdrop" onclick="closeDrawer()"></div><div id="drawer"><div class="dbody"><div class="skel" style="height:120px;margin-bottom:12px;"></div><div class="skel" style="height:240px;"></div></div></div>');
+  try{
+    const c=await api('/api/admin/calls/'+id).then(r=>r.json());
+    renderDrawer(c);
+  }catch(e){closeDrawer();if(e.message!=='unauthorized')toast('Failed to load call','error');}
+}
+function closeDrawer(){const d=$('drawer'),b=$('backdrop');if(d)d.remove();if(b)b.remove();}
+function renderDrawer(c){
+  const cb=c.cost_breakdown||{},gem=cb.gemini||{},tk=gem.tokens||{},tw=cb.twilio||{};
+  const tcalls=(c.tool_calls||[]).map(t=>
+    '<div class="tool"><b>'+esc(t.name)+'</b><pre>'+esc(JSON.stringify(t.result,null,2)||'').slice(0,600)+'</pre></div>').join('')||'<div class="kv"><span>No tool calls</span><span></span></div>';
+  const tr=(c.transcript||[]).map(m=>
+    '<div class="msg '+(m.role==='user'?'user':'gemini')+'"><span>'+esc(m.text)+'</span><span class="t">'+esc((m.role||'').toUpperCase())+'</span></div>').join('')||'<div class="empty">No transcript captured</div>';
+  $('drawer').innerHTML=
+    '<div class="dh"><div><div class="who">'+esc(c.caller||(c.source==='browser'?'Web visitor':c.call_sid||'Call'))+'</div>'+
+      '<div class="meta">'+esc(c.source)+' · '+fmtDT(c.started_at)+' · '+fmtDur(c.duration_seconds)+' · '+esc(c.status||'')+'</div></div>'+
+      '<button class="x" onclick="closeDrawer()">×</button></div>'+
+    '<div class="dbody">'+
+      '<div class="cost-grid">'+
+        '<div class="cost-card gem"><div class="ct">Gemini (AI) cost</div><div class="big">'+fmtUSD(gem.cost_usd)+'</div>'+
+          '<div class="kv"><span>Audio in</span><span>'+fmtNum(tk.audio_in)+'</span></div>'+
+          '<div class="kv"><span>Audio out</span><span>'+fmtNum(tk.audio_out)+'</span></div>'+
+          '<div class="kv"><span>Text in</span><span>'+fmtNum(tk.text_in)+'</span></div>'+
+          '<div class="kv"><span>Text out</span><span>'+fmtNum(tk.text_out)+'</span></div>'+
+          '<div class="kv"><span>Thinking</span><span>'+fmtNum(tk.thoughts)+'</span></div>'+
+          '<div class="kv"><span>Total tokens</span><span>'+fmtNum(tk.total)+'</span></div>'+
+        '</div>'+
+        '<div class="cost-card tw"><div class="ct">Twilio cost</div><div class="big">'+(tw.price_usd==null?'—':fmtUSD(tw.price_usd))+'</div>'+
+          '<div class="kv"><span>Duration</span><span>'+fmtDur(tw.duration_seconds)+'</span></div>'+
+          '<div class="kv"><span>Unit</span><span>'+esc(tw.price_unit||'—')+'</span></div>'+
+          '<div class="kv"><span>Estimated</span><span>'+(cb.cost_estimated?'yes':'no')+'</span></div>'+
+          (c.source==='twilio'?'<button class="btn ghost" style="margin-top:10px;width:100%;" onclick="refreshOne(\\''+c.id+'\\')">Refresh price</button>':'')+
+        '</div>'+
+      '</div>'+
+      '<div class="kv" style="padding:8px 2px;"><span>Total real cost</span><span style="font-weight:700;">'+fmtUSD(cb.total_cost_usd)+'</span></div>'+
+      '<div class="sub-h">Tool calls</div>'+tcalls+
+      '<div class="sub-h">Transcript</div>'+tr+
+      '<button class="btn ghost" style="margin-top:16px;width:100%;" onclick="exportCall(\\''+c.id+'\\')">Export call JSON</button>'+
+    '</div>';
+}
+async function refreshOne(id){
+  toast('Refreshing price…','info');
+  try{const r=await api('/api/admin/calls/'+id+'/refresh',{method:'POST'}).then(r=>r.json());
+    toast(r.updated?'Price updated':'Price not available yet',r.updated?'success':'info');
+    await loadAll();if($('drawer'))openDrawer(id);
+  }catch(e){if(e.message!=='unauthorized')toast('Refresh failed','error');}
+}
+async function exportCall(id){
+  try{const blob=await api('/api/admin/calls/'+id+'/export').then(r=>r.blob());
+    dl(blob,'call_'+id+'.json');
+  }catch(e){if(e.message!=='unauthorized')toast('Export failed','error');}
+}
+
+/* ---------- exports ---------- */
+function dl(blob,name){const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download=name;a.click();URL.revokeObjectURL(u);}
+function exportCSV(){
+  const rows=state.calls;
+  const cols=['started_at','call_sid','source','caller','duration_seconds','language','status','booking_created','gemini_cost_usd','twilio_price_usd','total_cost_usd'];
+  const lines=[cols.join(',')];
+  rows.forEach(c=>{
+    const v=[c.started_at,c.call_sid,c.source,c.caller,c.duration_seconds,c.language,c.status,c.booking_created,c.gemini_cost_usd,(c.twilio||{}).price_usd,c.total_cost_usd];
+    lines.push(v.map(x=>{x=x==null?'':String(x);return /[",\\n]/.test(x)?'"'+x.replace(/"/g,'""')+'"':x;}).join(','));
+  });
+  dl(new Blob([lines.join('\\n')],{type:'text/csv'}),'call_logs.csv');
+}
+async function refreshCosts(){
+  toast('Refreshing Twilio prices…','info');
+  try{const r=await api('/api/admin/refresh-costs',{method:'POST'}).then(r=>r.json());
+    toast('Updated '+r.updated+' of '+r.checked+' pending','success');await loadAll();
+  }catch(e){if(e.message!=='unauthorized')toast('Refresh failed','error');}
+}
+
+/* ---------- toast ---------- */
+function toast(msg,type){const el=document.createElement('div');el.className='toast '+(type||'info');el.textContent=msg;$('toasts').appendChild(el);setTimeout(()=>el.remove(),4000);}
+
+/* ---------- wire up ---------- */
+$('loginBtn').onclick=login;
+$('keyInput').addEventListener('keypress',e=>{if(e.key==='Enter')login();});
+$('logoutBtn').onclick=logout;
+$('refreshBtn').onclick=refreshCosts;
+$('csvBtn').onclick=exportCSV;
+$('sourceFilter').onchange=fetchCalls;
+$('fromDate').onchange=fetchCalls;
+$('toDate').onchange=fetchCalls;
+let st;$('search').addEventListener('input',()=>{clearTimeout(st);st=setTimeout(fetchCalls,300);});
+document.querySelectorAll('th[data-k]').forEach(th=>th.onclick=()=>sortBy(th.dataset.k));
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
+
+/* ---------- boot ---------- */
+(async()=>{
+  if(KEY()){try{await loadAll();showDash(true);}catch(e){showDash(false);}}
+  else showDash(false);
+})();
+</script>
+</body>
+</html>"""
+
+
+# ============ ADMIN DASHBOARD (call logs, transcripts, costing) ============
+
+def require_admin(request: Request):
+    """Gate admin endpoints with ANALYTICS_SECRET (header X-Admin-Key or ?key=)."""
+    key = request.headers.get("X-Admin-Key") or request.query_params.get("key") or ""
+    if not (ANALYTICS_SECRET and secrets.compare_digest(str(key), str(ANALYTICS_SECRET))):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _filters_from_request(request: Request):
+    qp = request.query_params
+    return {
+        "source": qp.get("source") or None,
+        "from": qp.get("from") or None,
+        "to": qp.get("to") or None,
+        "q": qp.get("q") or None,
+        "booking": qp.get("booking"),
+        "limit": qp.get("limit"),
+        "offset": qp.get("offset"),
+    }
+
+
+async def _refresh_call_price(call_id):
+    """Re-fetch and persist Twilio's real billed price for one call."""
+    call = await store.load_call(call_id)
+    if not call or call.get("source") != "twilio":
+        return False
+    sid = call.get("call_sid")
+    if not sid or str(sid).startswith("web-"):
+        return False
+    loop = asyncio.get_running_loop()
+    info = await loop.run_in_executor(None, pricing.fetch_twilio_price, sid)
+    if not info:
+        return False
+    call["twilio"].update({
+        "price_unit": info.get("price_unit"),
+        "status": info.get("status"),
+        "duration_seconds": info.get("duration_seconds"),
+    })
+    updated = False
+    if info.get("price_usd") is not None:
+        call["twilio"]["price_usd"] = info["price_usd"]
+        if info.get("duration_seconds"):
+            call["duration_seconds"] = info["duration_seconds"]
+        total, estimated = pricing.compute_total(call)
+        call["total_cost_usd"] = total
+        call["cost_estimated"] = estimated
+        updated = True
+    await store.save_call(call)
+    return updated
+
+
+@app.get("/admin")
+async def admin_dashboard():
+    """Admin dashboard — call logs, transcripts and real costing."""
+    return HTMLResponse(ADMIN_DASHBOARD_HTML)
+
+
+@app.get("/api/admin/summary")
+async def admin_summary(request: Request):
+    require_admin(request)
+    filters = _filters_from_request(request)
+    return JSONResponse(await store.summary(filters))
+
+
+@app.get("/api/admin/calls")
+async def admin_calls(request: Request):
+    require_admin(request)
+    filters = _filters_from_request(request)
+    if filters.get("limit") is None:
+        filters["limit"] = 500
+    return JSONResponse(await store.list_calls(filters))
+
+
+@app.get("/api/admin/calls.csv")
+async def admin_calls_csv(request: Request):
+    require_admin(request)
+    filters = _filters_from_request(request)
+    filters["limit"] = None
+    data = await store.list_calls(filters)
+    buf = io.StringIO()
+    cols = ["started_at", "call_sid", "source", "caller", "duration_seconds",
+            "language", "status", "booking_created", "gemini_cost_usd",
+            "twilio_price_usd", "total_cost_usd", "cost_estimated"]
+    writer = csv.writer(buf)
+    writer.writerow(cols)
+    for c in data["items"]:
+        writer.writerow([
+            c.get("started_at"), c.get("call_sid"), c.get("source"), c.get("caller"),
+            c.get("duration_seconds"), c.get("language"), c.get("status"),
+            c.get("booking_created"), c.get("gemini_cost_usd"),
+            (c.get("twilio") or {}).get("price_usd"), c.get("total_cost_usd"),
+            c.get("cost_estimated"),
+        ])
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=call_logs.csv"})
+
+
+@app.get("/api/admin/calls/{call_id}")
+async def admin_call_detail(call_id: str, request: Request):
+    require_admin(request)
+    call = await store.load_call(call_id)
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    tw = call.get("twilio") or {}
+    call["cost_breakdown"] = {
+        "gemini": pricing.gemini_cost_breakdown(call.get("tokens")),
+        "twilio": {
+            "duration_seconds": tw.get("duration_seconds") or call.get("duration_seconds"),
+            "price_usd": tw.get("price_usd"),
+            "price_unit": tw.get("price_unit"),
+        },
+        "total_cost_usd": call.get("total_cost_usd"),
+        "cost_estimated": call.get("cost_estimated"),
+    }
+    return JSONResponse(call)
+
+
+@app.get("/api/admin/calls/{call_id}/export")
+async def admin_call_export(call_id: str, request: Request):
+    require_admin(request)
+    call = await store.load_call(call_id)
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    return Response(
+        content=json.dumps(call, ensure_ascii=False, indent=2, default=str),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename=call_{call_id}.json"},
+    )
+
+
+@app.post("/api/admin/refresh-costs")
+async def admin_refresh_costs(request: Request):
+    require_admin(request)
+    data = await store.list_calls({"source": "twilio", "limit": None})
+    pending = [c for c in data["items"] if (c.get("twilio") or {}).get("price_usd") is None]
+    updated = 0
+    for c in pending:
+        try:
+            if await _refresh_call_price(c["id"]):
+                updated += 1
+        except Exception as e:
+            logger.warning(f"refresh-costs failed for {c.get('id')}: {e}")
+    return {"checked": len(pending), "updated": updated}
+
+
+@app.post("/api/admin/calls/{call_id}/refresh")
+async def admin_call_refresh(call_id: str, request: Request):
+    require_admin(request)
+    updated = await _refresh_call_price(call_id)
+    return {"updated": bool(updated)}
 
 
 if __name__ == "__main__":

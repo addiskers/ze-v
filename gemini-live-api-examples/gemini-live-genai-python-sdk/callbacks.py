@@ -65,13 +65,14 @@ def _parse_text(text, now_local):
     if not t:
         return None
 
-    # "in N minutes/hours/days"
-    m = re.search(r'\bin\s+(\d{1,3})\s*(minute|min|hour|hr|h|day|d)s?\b', t)
+    # "in/after/within N minutes/hours/days", or a bare "N minutes"
+    m = (re.search(r'\b(?:in|after|within)\s+(\d{1,3})\s*(minute|min|hour|hr|h|day|d)s?\b', t)
+         or re.search(r'\b(\d{1,3})\s*(minutes?|mins?|hours?|hrs?|days?)\b', t))
     if m:
         n, unit = int(m.group(1)), m.group(2)
         if unit.startswith("d"):
             return now_local + timedelta(days=n)
-        if unit in ("h", "hr", "hour"):
+        if unit.startswith("h"):
             return now_local + timedelta(hours=n)
         return now_local + timedelta(minutes=n)
 

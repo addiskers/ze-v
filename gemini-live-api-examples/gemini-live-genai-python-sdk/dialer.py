@@ -76,3 +76,25 @@ async def place_call(to_number, *, base_url=None, request=None, gen=0, origin_ca
     except Exception as e:
         logger.error(f"Failed to initiate Plivo call to {to_number}: {e}")
         return {"error": str(e)}
+
+
+def _hangup_sync(call_uuid):
+    import plivo
+    client = plivo.RestClient(os.getenv("PLIVO_AUTH_ID"), os.getenv("PLIVO_AUTH_TOKEN"))
+    client.calls.delete(call_uuid)
+
+
+async def hangup_call(call_uuid):
+    """Hang up a live Plivo call by its CallUUID (Plivo Hangup API)."""
+    if not call_uuid:
+        return {"error": "no call_uuid"}
+    if not os.getenv("PLIVO_AUTH_ID") or not os.getenv("PLIVO_AUTH_TOKEN"):
+        return {"error": "Plivo credentials not configured"}
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _hangup_sync, call_uuid)
+        logger.info(f"Hung up Plivo call {call_uuid}")
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Hangup failed for {call_uuid}: {e}")
+        return {"error": str(e)}

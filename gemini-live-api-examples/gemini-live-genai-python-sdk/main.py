@@ -69,8 +69,31 @@ def handle_record_rsvp(**kwargs):
     }
 
 
+def handle_end_call(**kwargs):
+    """No-op tool result; the actual hangup is driven by the 'end_call' event
+    emitted from gemini_live once this tool fires."""
+    return {"success": True}
+
+
 # Live transcript watchers (browser WebSockets watching phone calls)
 live_watchers: set = set()
+
+# Bridge metadata from the /plivo/answer webhook to the media-stream WS, keyed by
+# Plivo CallUUID. Plivo does NOT reliably forward <Stream extraHeaders> on
+# bidirectional streams, so we stash caller/generation here at answer time and look
+# them up when the stream connects.
+_pending_call_meta: dict = {}
+
+
+def _remember_call_meta(call_uuid, caller, gen, origin):
+    if not call_uuid:
+        return
+    _pending_call_meta[call_uuid] = {
+        "caller": caller or "", "gen": gen or "", "origin": origin or "",
+    }
+    if len(_pending_call_meta) > 200:                 # bound memory; drop oldest
+        for k in list(_pending_call_meta)[:50]:
+            _pending_call_meta.pop(k, None)
 
 # Initialize FastAPI
 app = FastAPI()
@@ -152,6 +175,7 @@ async def websocket_endpoint(websocket: WebSocket):
         input_sample_rate=16000,
         tool_mapping={
             "record_rsvp": handle_record_rsvp,
+            "end_call": handle_end_call,
         }
     )
 
@@ -230,6 +254,8 @@ async def websocket_endpoint(websocket: WebSocket):
                             await websocket.send_json(event)
                         except RuntimeError:
                             return
+                        if event.get("type") == "end_call":
+                            return        # agent ended the browser call
                 if not should_retry:
                     return
             except Exception as e:
@@ -277,9 +303,16 @@ async def plivo_answer(request: Request):
                   or "onrender.com" in host or "globalvoxinc.ai" in host)
     ws_url = f"{'wss' if secure else 'ws'}://{host}/plivo/media-stream"
 
-    caller = request.query_params.get("caller", "")
-    gen = request.query_params.get("gen", "")
-    origin = request.query_params.get("origin", "")
+    qp = request.query_params
+    # Our explicit caller param (set by /call-me + scheduler) wins; for genuine
+    # inbound calls Plivo gives us the member's number in `From`.
+    caller = qp.get("caller") or qp.get("From") or qp.get("from") or ""
+    gen = qp.get("gen", "")
+    origin = qp.get("origin", "")
+    # Stash by Plivo CallUUID so the media-stream WS can recover caller/generation
+    # even though extraHeaders don't propagate on bidirectional streams.
+    call_uuid = qp.get("CallUUID") or qp.get("callUUID") or qp.get("RequestUUID") or ""
+    _remember_call_meta(call_uuid, caller, gen, origin)
     hdr_pairs = []
     if caller:
         hdr_pairs.append(f"X-Caller={quote(caller)}")
@@ -315,6 +348,7 @@ async def plivo_media_stream(websocket: WebSocket):
         input_sample_rate=16000,
         tool_mapping={
             "record_rsvp": handle_record_rsvp,
+            "end_call": handle_end_call,
         }
     )
 
@@ -325,9 +359,14 @@ async def plivo_media_stream(websocket: WebSocket):
         # Persist (never let a recorder failure affect the live broadcast).
         etype = event.get("type")
         if etype == "call_start":
+            meta = _pending_call_meta.pop(event.get("call_sid") or "", {})
+            caller = meta.get("caller") or event.get("caller") or ""
+            try:
+                generation = int(meta.get("gen") or event.get("generation") or 0)
+            except (TypeError, ValueError):
+                generation = 0
             await recorder.open(source="plivo", call_sid=event.get("call_sid") or None,
-                                caller=event.get("caller"),
-                                generation=event.get("generation", 0))
+                                caller=caller, generation=generation)
         elif etype == "call_end":
             await recorder.close()
         else:

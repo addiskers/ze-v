@@ -21,6 +21,7 @@ import array
 import base64
 import json
 import logging
+import os
 import struct
 import time
 from urllib.parse import unquote
@@ -267,10 +268,38 @@ class PlivoMediaBridge:
             except Exception:
                 pass
 
+    async def _drain_then_hangup(self):
+        """Wait for the paced outbound buffer (the goodbye) to finish sending, give
+        Plivo's own playout a moment to flush, then hang up the PSTN call."""
+        import dialer
+        for _ in range(400):                       # up to ~8s
+            if self._out_frames.empty() and not self._residual:
+                break
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(1.2)                    # let Plivo flush its buffer
+        if self.call_id:
+            await dialer.hangup_call(self.call_id)
+
+    async def _max_duration_guard(self):
+        """Safety net: hang up a call that runs longer than CALL_MAX_SECONDS."""
+        try:
+            max_s = int(os.getenv("CALL_MAX_SECONDS", "420"))
+        except ValueError:
+            max_s = 420
+        try:
+            await asyncio.sleep(max_s)
+            logger.warning(f"Call {self.call_id} exceeded {max_s}s; hanging up")
+            import dialer
+            if self.call_id:
+                await dialer.hangup_call(self.call_id)
+        except asyncio.CancelledError:
+            pass
+
     async def run(self):
         """Run the bridge: Plivo <-> Gemini."""
         plivo_task = asyncio.create_task(self.handle_plivo_messages())
         sender_task = asyncio.create_task(self._outbound_sender())
+        guard_task = asyncio.create_task(self._max_duration_guard())
 
         try:
             async for event in self.gemini.start_session(
@@ -282,8 +311,13 @@ class PlivoMediaBridge:
             ):
                 if event:
                     await self._emit(event)
-                    if event.get("type") == "error":
+                    etype = event.get("type")
+                    if etype == "error":
                         logger.error(f"Gemini error during Plivo call: {event}")
+                        break
+                    if etype == "end_call":
+                        logger.info("Agent requested end_call; hanging up")
+                        await self._drain_then_hangup()
                         break
         except Exception as e:
             logger.error(f"Gemini session error: {e}")
@@ -292,4 +326,5 @@ class PlivoMediaBridge:
                 await self._emit({"type": "call_end"})
             plivo_task.cancel()
             sender_task.cancel()
+            guard_task.cancel()
             logger.info("Plivo-Gemini bridge closed")

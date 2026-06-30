@@ -75,7 +75,7 @@ Busy / driving / in a meeting / can't talk: treat as a callback request — apol
 - No casual/unrelated talk; no politics, religion, sports, personal opinions, EO membership, sponsorships, registrations, parking, accommodation, transportation, or logistics beyond Approved Knowledge.
 - record_rsvp is mandatory, silent, once per call, before you conclude.
 - Always warm, enthusiastic, premium, conversational, genuinely excited — and concise.
-- Once the objective is complete and any final in-scope question answered, thank them warmly and end the call.
+- ENDING THE CALL: once the objective is complete and any final in-scope question is answered, speak your warm goodbye, then IMMEDIATELY call the end_call tool (silently) to hang up. Every completed call must end with you calling end_call right after your final words — never leave the line open.
 """
 
 TOOLS = [
@@ -99,6 +99,11 @@ TOOLS = [
             },
             "required": ["outcome_status"]
         }
+    },
+    {
+        "name": "end_call",
+        "description": "Hang up the phone call. Call this ONCE, silently, immediately AFTER you have spoken your final goodbye, when the conversation is complete (the RSVP is recorded and any final question answered). This ends the call.",
+        "parameters": {"type": "object", "properties": {}, "required": []}
     }
 ]
 
@@ -254,10 +259,13 @@ class GeminiLive:
 
                             if tool_call:
                                 function_responses = []
+                                end_requested = False
                                 for fc in tool_call.function_calls:
                                     func_name = fc.name
                                     args = fc.args or {}
-                                    
+                                    if func_name == "end_call":
+                                        end_requested = True
+
                                     if func_name in self.tool_mapping:
                                         try:
                                             tool_func = self.tool_mapping[func_name]
@@ -268,15 +276,20 @@ class GeminiLive:
                                                 result = await loop.run_in_executor(None, lambda: tool_func(**args))
                                         except Exception as e:
                                             result = f"Error: {e}"
-                                        
+
                                         function_responses.append(types.FunctionResponse(
                                             name=func_name,
                                             id=fc.id,
                                             response={"result": result}
                                         ))
                                         await event_queue.put({"type": "tool_call", "name": func_name, "args": args, "result": result})
-                                
-                                await session.send_tool_response(function_responses=function_responses)
+
+                                if function_responses:
+                                    await session.send_tool_response(function_responses=function_responses)
+                                # Signal the caller (phone bridge / browser) to hang up
+                                # AFTER the agent's goodbye audio has been emitted.
+                                if end_requested:
+                                    await event_queue.put({"type": "end_call"})
                         
                         # session.receive() iterator ended (e.g. after turn_complete) — re-enter to keep listening
                         logger.debug("Gemini receive iterator completed, re-entering receive loop")

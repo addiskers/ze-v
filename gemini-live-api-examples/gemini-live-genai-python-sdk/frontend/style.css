@@ -1,6 +1,6 @@
 /* =========================================================================
    EO Gujarat — "An Evening with Radha"
-   Premium invitation experience. Midnight navy + gold + rose.
+   Premium invitation experience. Midnight navy + gold + sapphire blue.
    ========================================================================= */
 
 :root {
@@ -14,8 +14,8 @@
   --gold: #e9c46a;
   --gold-soft: #f4dca0;
   --gold-deep: #c79a3c;
-  --rose: #e6739f;
-  --rose-soft: #f4a6c4;
+  --blue: #5b9cf0;
+  --blue-soft: #9cc2f5;
   --coming: #4ade80;
   --danger: #ef4444;
 
@@ -45,7 +45,7 @@ body {
   min-height: 100vh;
   overflow-x: hidden;
   background:
-    radial-gradient(1200px 600px at 80% -10%, rgba(230, 115, 159, 0.10), transparent 60%),
+    radial-gradient(1200px 600px at 80% -10%, rgba(91, 156, 240, 0.10), transparent 60%),
     radial-gradient(1000px 500px at 10% 110%, rgba(233, 196, 106, 0.10), transparent 60%),
     linear-gradient(160deg, var(--bg-1), var(--bg-0));
 }
@@ -112,7 +112,7 @@ body::before {
 .call-timer { font-family: var(--font-mono); font-size: 0.88rem; font-weight: 600; color: var(--gold); letter-spacing: 0.12em; min-width: 52px; text-align: center; }
 .language-pill {
   font-family: var(--font-mono); font-size: 0.66rem; font-weight: 700; padding: 4px 11px; border-radius: var(--r-full);
-  background: rgba(230, 115, 159, 0.14); color: var(--rose-soft); border: 1px solid rgba(230, 115, 159, 0.3);
+  background: rgba(91, 156, 240, 0.14); color: var(--blue-soft); border: 1px solid rgba(91, 156, 240, 0.3);
   letter-spacing: 0.12em; text-transform: uppercase;
 }
 
@@ -132,13 +132,13 @@ body::before {
 .invite-avatar {
   width: 92px; height: 92px; border-radius: 50%; margin: 0 auto 18px; display: grid; place-items: center; position: relative;
   font-family: var(--font-serif); font-size: 2.5rem; font-weight: 700; color: var(--bg-0);
-  background: linear-gradient(135deg, var(--rose-soft), var(--rose) 55%, #b5497a);
-  box-shadow: 0 12px 30px rgba(230, 115, 159, 0.35), inset 0 0 0 4px rgba(255,255,255,0.18);
+  background: linear-gradient(135deg, var(--blue-soft), var(--blue) 55%, #2f6abf);
+  box-shadow: 0 12px 30px rgba(91, 156, 240, 0.35), inset 0 0 0 4px rgba(255,255,255,0.18);
 }
 .invite-avatar::before { content: ''; position: absolute; inset: -8px; border-radius: 50%; border: 1px solid rgba(244, 166, 196, 0.4); animation: ripple 3s ease-out infinite; }
 .invite-kicker { font-size: 0.72rem; letter-spacing: 0.26em; text-transform: uppercase; color: var(--gold); margin-bottom: 8px; }
 .invite-title { font-family: var(--font-serif); font-size: 2.5rem; line-height: 1.05; font-weight: 700; margin-bottom: 8px; }
-.invite-title .amp { color: var(--rose-soft); font-style: italic; }
+.invite-title .amp { color: var(--blue-soft); font-style: italic; }
 .invite-sub { color: var(--text-1); font-size: 0.95rem; margin-bottom: 24px; }
 
 .event-grid {
@@ -178,10 +178,10 @@ body::before {
 .phone-input:focus { border-color: rgba(233, 196, 106, 0.5); }
 .call-me-btn {
   display: flex; align-items: center; gap: 6px; padding: 11px 18px; border: none; border-radius: var(--r-sm);
-  background: linear-gradient(135deg, var(--rose-soft), var(--rose)); color: var(--bg-0);
+  background: linear-gradient(135deg, var(--blue-soft), var(--blue)); color: var(--bg-0);
   font-family: var(--font-sans); font-size: 0.82rem; font-weight: 700; cursor: pointer; white-space: nowrap; transition: all var(--t-fast);
 }
-.call-me-btn:hover { transform: scale(1.04); box-shadow: 0 0 16px rgba(230, 115, 159, 0.4); }
+.call-me-btn:hover { transform: scale(1.04); box-shadow: 0 0 16px rgba(91, 156, 240, 0.4); }
 .call-me-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 .call-me-status { font-size: 0.76rem; margin-top: 10px; min-height: 1.2em; text-align: center; }
 .call-me-status.success { color: var(--coming); }
@@ -196,7 +196,7 @@ body::before {
 #radha-orb { width: 100%; height: 100%; display: block; }
 .orb-monogram {
   position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--font-serif);
-  font-size: 3.4rem; font-weight: 700; color: rgba(255, 255, 255, 0.92); text-shadow: 0 2px 18px rgba(230, 115, 159, 0.6); pointer-events: none;
+  font-size: 3.4rem; font-weight: 700; color: rgba(255, 255, 255, 0.92); text-shadow: 0 2px 18px rgba(91, 156, 240, 0.6); pointer-events: none;
 }
 .orb-caption { margin-top: 22px; font-size: 1.05rem; font-weight: 600; letter-spacing: 0.02em; color: var(--text-0); min-height: 1.4em; text-align: center; }
 .orb-caption .sub { display: block; font-size: 0.8rem; font-weight: 400; color: var(--text-2); margin-top: 3px; letter-spacing: 0.04em; }
@@ -224,7 +224,7 @@ body::before {
 
 .transcript { display: flex; flex-direction: column; flex: 1; min-height: 220px; }
 .transcript-header { display: flex; align-items: center; gap: 8px; padding: 13px 16px; border-bottom: 1px solid var(--glass-border-soft); font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-2); }
-.transcript-header .ico { color: var(--rose-soft); }
+.transcript-header .ico { color: var(--blue-soft); }
 .transcript-body { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; scroll-behavior: smooth; }
 .transcript-body::-webkit-scrollbar { width: 4px; }
 .transcript-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
@@ -234,7 +234,7 @@ body::before {
 .message .msg-text { display: inline; word-break: break-word; }
 .message .msg-time { display: block; font-size: 0.6rem; margin-top: 4px; opacity: 0.5; font-family: var(--font-mono); }
 .message.user { align-self: flex-end; border-bottom-right-radius: 4px; color: var(--text-0); background: linear-gradient(135deg, rgba(233, 196, 106, 0.22), rgba(233, 196, 106, 0.10)); border: 1px solid rgba(233, 196, 106, 0.2); }
-.message.gemini { align-self: flex-start; border-bottom-left-radius: 4px; color: var(--text-0); background: linear-gradient(135deg, rgba(230, 115, 159, 0.22), rgba(230, 115, 159, 0.10)); border: 1px solid rgba(230, 115, 159, 0.2); }
+.message.gemini { align-self: flex-start; border-bottom-left-radius: 4px; color: var(--text-0); background: linear-gradient(135deg, rgba(91, 156, 240, 0.22), rgba(91, 156, 240, 0.10)); border: 1px solid rgba(91, 156, 240, 0.2); }
 .message.system { align-self: center; background: rgba(255,255,255,0.04); color: var(--text-2); font-size: 0.78rem; font-style: italic; border: 1px solid var(--glass-border-soft); }
 
 .input-area { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--glass-border-soft); }
@@ -284,7 +284,7 @@ body::before {
 .tr-time { font-family: var(--font-mono); color: var(--text-2); font-size: 0.64rem; flex-shrink: 0; margin-top: 1px; }
 .tr-role { font-weight: 700; flex-shrink: 0; }
 .tr-user .tr-role { color: var(--gold); }
-.tr-gemini .tr-role { color: var(--rose-soft); }
+.tr-gemini .tr-role { color: var(--blue-soft); }
 .tr-text { color: var(--text-1); }
 
 .btn-restart { display: inline-flex; align-items: center; gap: 9px; margin-top: 24px; padding: 13px 26px; border: none; border-radius: var(--r-full); cursor: pointer; background: linear-gradient(135deg, var(--gold-soft), var(--gold-deep)); color: var(--bg-0); font-family: var(--font-sans); font-size: 0.9rem; font-weight: 700; transition: transform var(--t-fast), box-shadow var(--t-fast); }

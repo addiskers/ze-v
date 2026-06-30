@@ -275,9 +275,9 @@ function startOrb() {
     // Outer glow
     const glowR = baseR * (1.55 + out * 1.1);
     const glow = ctx.createRadialGradient(cx, cy, baseR * 0.35, cx, cy, glowR);
-    glow.addColorStop(0, `rgba(230,115,159,${0.3 + out * 0.45})`);
+    glow.addColorStop(0, `rgba(91,156,240,${0.3 + out * 0.45})`);
     glow.addColorStop(0.5, `rgba(233,196,106,${0.1 + out * 0.22})`);
-    glow.addColorStop(1, "rgba(230,115,159,0)");
+    glow.addColorStop(1, "rgba(91,156,240,0)");
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(cx, cy, glowR, 0, Math.PI * 2); ctx.fill();
 
@@ -291,9 +291,9 @@ function startOrb() {
     // Core orb
     const coreR = baseR * (1 + out * 0.16);
     const core = ctx.createRadialGradient(cx - coreR * 0.3, cy - coreR * 0.3, coreR * 0.1, cx, cy, coreR);
-    core.addColorStop(0, "#f9c3d8");
-    core.addColorStop(0.6, "#e6739f");
-    core.addColorStop(1, "#b5497a");
+    core.addColorStop(0, "#cfe0fb");
+    core.addColorStop(0.6, "#5b9cf0");
+    core.addColorStop(1, "#2f6abf");
     ctx.fillStyle = core;
     ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, Math.PI * 2); ctx.fill();
 

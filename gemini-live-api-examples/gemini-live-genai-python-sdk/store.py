@@ -294,8 +294,13 @@ async def list_callbacks(statuses=None):
 
 
 async def reset_orphaned_callbacks():
-    """Boot recovery: an `in_flight` callback was claimed but the process died.
-    If it already has a result_call_id it was dialed -> completed; else -> pending."""
+    """Boot recovery for callbacks the process claimed but never settled.
+
+    We cannot tell "claimed but never dialed" from "dialed then crashed before
+    settle" (the dial may have reached Plivo), so we FAIL SAFE — never auto-redial
+    an interrupted in_flight callback. If a result_call_id is present it was
+    confirmed dialed -> completed; otherwise -> failed (an operator can re-queue it
+    via call-now). This guarantees the scheduler never double-dials a member."""
     with _LOCK:
         ids = [cid for cid, m in _INDEX.items()
                if (m.get("callback") or {}).get("status") == "in_flight"]
@@ -307,10 +312,10 @@ async def reset_orphaned_callbacks():
         if cb.get("status") != "in_flight":
             continue
         if cb.get("result_call_id"):
-            cb["status"] = "completed"          # was already dialed before the crash
+            cb["status"] = "completed"          # confirmed dialed before the crash
         else:
-            cb["status"] = "pending"
-            cb["last_error"] = "reset_on_boot"
+            cb["status"] = "failed"             # may have dialed — do not auto-redial
+            cb["last_error"] = "interrupted during dial; re-queue manually if needed"
         await save_call(call)
         logger.info(f"Reset orphaned callback {cid} -> {cb['status']}")
 

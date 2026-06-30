@@ -96,8 +96,19 @@ async def _clear_breaker():
         await store.save_scheduler_state(state)
 
 
-async def _settle(call, cb, res, now):
+async def _settle(call, res, now):
+    """Apply the dial result. Re-loads the record so a concurrent admin write
+    (e.g. cancel) during the dial window is respected, never clobbered."""
     global _consecutive_failures
+    fresh = await store.load_call(call["id"])
+    cb = (fresh or {}).get("callback")
+    if not cb or cb.get("status") != "in_flight":
+        # Operator changed it mid-dial (cancelled/etc.) — honour that, don't overwrite.
+        if res.get("success"):
+            _consecutive_failures = 0
+            await _clear_breaker()
+        logger.info(f"Callback {call['id']} changed during dial; not overwriting status")
+        return
     if res.get("success"):
         cb["status"] = "completed"
         cb["result_call_id"] = res.get("call_uuid")
@@ -116,7 +127,7 @@ async def _settle(call, cb, res, now):
             cb["next_retry_at"] = _iso(now + timedelta(seconds=_backoff_seconds(cb["attempts"])))
         if _consecutive_failures >= _cfg_int("CALLBACK_FAILFAST_THRESHOLD", 5):
             await _trip_breaker(now)
-    await store.save_call(call)
+    await store.save_call(fresh)
 
 
 async def _tick():
@@ -150,15 +161,21 @@ async def _tick():
         cb["status"] = "in_flight"
         cb["attempts"] = cb.get("attempts", 0) + 1
         cb["last_attempt_at"] = _iso(claim_now)
+        cb["dialing_started_at"] = _iso(claim_now)
         await store.save_call(call)
         dialed += 1
-        res = await dialer.place_call(
-            to,
-            base_url=os.getenv("PUBLIC_URL"),
-            gen=int(cb.get("generation", 1)),
-            origin_call_id=cb.get("origin_call_id") or call.get("id"),
-        )
-        await _settle(call, cb, res, _now())
+        try:
+            res = await asyncio.wait_for(
+                dialer.place_call(
+                    to,
+                    base_url=os.getenv("PUBLIC_URL"),
+                    gen=int(cb.get("generation", 1)),
+                    origin_call_id=cb.get("origin_call_id") or call.get("id"),
+                ),
+                timeout=_cfg_int("CALLBACK_DIAL_TIMEOUT", 60))
+        except asyncio.TimeoutError:
+            res = {"error": "dial timeout"}
+        await _settle(call, res, _now())
 
 
 async def run_loop():

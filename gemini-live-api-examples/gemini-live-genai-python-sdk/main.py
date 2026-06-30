@@ -407,7 +407,7 @@ LIVE_DASHBOARD_HTML = """<!DOCTYPE html>
   --card: rgba(17,24,39,0.75);
   --border: rgba(255,255,255,0.08);
   --cyan: #00d4ff;
-  --purple: #7c3aed;
+  --gold: #e9c46a;
   --green: #10b981;
   --red: #ef4444;
   --text: #f1f5f9;
@@ -519,8 +519,8 @@ body::before {
 }
 .msg.gemini {
   align-self: flex-start;
-  background: linear-gradient(135deg, rgba(124,58,237,0.2), rgba(124,58,237,0.1));
-  border: 1px solid rgba(124,58,237,0.15);
+  background: linear-gradient(135deg, rgba(233,196,106,0.2), rgba(233,196,106,0.1));
+  border: 1px solid rgba(233,196,106,0.15);
   border-bottom-left-radius: 4px;
 }
 .msg.system {
@@ -666,7 +666,7 @@ ADMIN_DASHBOARD_HTML = """<!DOCTYPE html>
 <style>
 :root{
   --bg:#0a0e17; --card:rgba(17,24,39,0.75); --border:rgba(255,255,255,0.08);
-  --cyan:#00d4ff; --purple:#7c3aed; --green:#10b981; --red:#ef4444; --amber:#f59e0b;
+  --cyan:#00d4ff; --gold:#e9c46a; --green:#10b981; --red:#ef4444; --amber:#f59e0b;
   --text:#f1f5f9; --muted:#64748b; --secondary:#94a3b8;
   --mono:'SF Mono',ui-monospace,Menlo,Consolas,monospace;
 }
@@ -711,7 +711,7 @@ input:focus,select:focus{border-color:var(--cyan);}
 .stat .label{font-size:0.66rem;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);}
 .stat .value{font-size:1.5rem;font-weight:800;margin-top:8px;font-family:var(--mono);}
 .stat .sub{font-size:0.68rem;color:var(--secondary);margin-top:4px;}
-.stat.hi .value{color:var(--purple);}
+.stat.hi .value{color:var(--gold);}
 .stat.cy .value{color:var(--cyan);}
 .stat.gr .value{color:var(--green);}
 
@@ -739,7 +739,7 @@ tbody tr:hover{background:rgba(0,212,255,0.05);}
 .pill.completed{background:rgba(16,185,129,.15);color:var(--green);}
 .pill.in_progress{background:rgba(0,212,255,.15);color:var(--cyan);}
 .pill.abandoned,.pill.failed{background:rgba(239,68,68,.15);color:var(--red);}
-.pill.src{background:rgba(124,58,237,.15);color:#b794f6;}
+.pill.src{background:rgba(233,196,106,.15);color:#f0d28a;}
 .est{color:var(--amber);font-size:0.6rem;margin-left:4px;}
 .tick{color:var(--green);font-weight:700;}
 .dash{color:var(--muted);}
@@ -757,11 +757,11 @@ tbody tr:hover{background:rgba(0,212,255,0.05);}
 .x{cursor:pointer;color:var(--muted);font-size:1.3rem;line-height:1;background:none;border:none;}
 .cost-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px;}
 .cost-card{border:1px solid var(--border);border-radius:12px;padding:12px;}
-.cost-card.gem{border-color:rgba(124,58,237,.3);}
+.cost-card.gem{border-color:rgba(233,196,106,.3);}
 .cost-card.tw{border-color:rgba(0,212,255,.3);}
 .cost-card .ct{font-size:0.66rem;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:8px;}
 .cost-card .big{font-size:1.25rem;font-weight:800;font-family:var(--mono);}
-.cost-card.gem .big{color:var(--purple);}
+.cost-card.gem .big{color:var(--gold);}
 .cost-card.tw .big{color:var(--cyan);}
 .kv{display:flex;justify-content:space-between;font-size:0.7rem;color:var(--secondary);padding:3px 0;}
 .kv span:last-child{font-family:var(--mono);color:var(--text);}
@@ -769,7 +769,7 @@ tbody tr:hover{background:rgba(0,212,255,0.05);}
 .msg{padding:9px 13px;border-radius:12px;max-width:88%;font-size:0.82rem;line-height:1.5;margin-bottom:7px;animation:fadeIn .2s;}
 .msg .t{display:block;font-size:0.58rem;opacity:.5;font-family:var(--mono);margin-top:3px;}
 .msg.user{margin-left:auto;background:linear-gradient(135deg,rgba(0,212,255,.2),rgba(0,212,255,.08));border:1px solid rgba(0,212,255,.15);}
-.msg.gemini{background:linear-gradient(135deg,rgba(124,58,237,.2),rgba(124,58,237,.08));border:1px solid rgba(124,58,237,.15);}
+.msg.gemini{background:linear-gradient(135deg,rgba(233,196,106,.2),rgba(233,196,106,.08));border:1px solid rgba(233,196,106,.15);}
 .tool{background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:9px 12px;font-size:0.72rem;color:var(--green);margin-bottom:7px;}
 .tool b{font-weight:700;}
 .tool pre{margin-top:5px;color:var(--secondary);font-size:0.66rem;white-space:pre-wrap;word-break:break-word;}
@@ -994,7 +994,7 @@ function renderTrend(){
     const h=(d.cost_usd/maxCost)*ih;
     bars+='<rect x="'+(x(i)-bw/2)+'" y="'+(pad.t+ih-h)+'" width="'+bw+'" height="'+h+'" rx="3" fill="url(#g)"><title>'+d.date+' · '+fmtUSD(d.cost_usd)+' · '+d.calls+' calls</title></rect>';
     line+=(i?' L':'M')+x(i)+' '+yN(d.calls);
-    dots+='<circle cx="'+x(i)+'" cy="'+yN(d.calls)+'" r="3" fill="#7c3aed"/>';
+    dots+='<circle cx="'+x(i)+'" cy="'+yN(d.calls)+'" r="3" fill="#e9c46a"/>';
     if(i%step===0)xlabels+='<text x="'+x(i)+'" y="'+(H-8)+'" fill="#64748b" font-size="9" text-anchor="middle">'+d.date.slice(5)+'</text>';
   });
   // y axis (cost) ticks
@@ -1004,8 +1004,8 @@ function renderTrend(){
             '<text x="'+(pad.l-6)+'" y="'+(yy+3)+'" fill="#64748b" font-size="9" text-anchor="end">'+fmtUSD2(v)+'</text>';}
   box.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+
     '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#00d4ff" stop-opacity="0.9"/><stop offset="1" stop-color="#00d4ff" stop-opacity="0.25"/></linearGradient></defs>'+
-    yticks+bars+'<path d="'+line+'" fill="none" stroke="#7c3aed" stroke-width="2"/>'+dots+xlabels+'</svg>'+
-    '<div style="display:flex;gap:16px;font-size:0.66rem;color:#94a3b8;margin-top:6px;"><span style="color:#00d4ff;">■ cost / day</span><span style="color:#7c3aed;">● calls / day</span></div>';
+    yticks+bars+'<path d="'+line+'" fill="none" stroke="#e9c46a" stroke-width="2"/>'+dots+xlabels+'</svg>'+
+    '<div style="display:flex;gap:16px;font-size:0.66rem;color:#94a3b8;margin-top:6px;"><span style="color:#00d4ff;">■ cost / day</span><span style="color:#e9c46a;">● calls / day</span></div>';
 }
 
 /* ---------- render: breakdown ---------- */
@@ -1014,7 +1014,7 @@ function renderBreakdown(){
   const g=s.gemini_cost_usd||0,t=s.twilio_cost_usd||0,tot=(g+t)||1;
   const langs=s.by_language||{};
   let html='';
-  html+=brkRow('Gemini (AI)',fmtUSD(g),g/tot,'#7c3aed');
+  html+=brkRow('Gemini (AI)',fmtUSD(g),g/tot,'#e9c46a');
   html+=brkRow('Twilio (telephony)',fmtUSD(t),t/tot,'#00d4ff');
   html+='<div class="sub-h" style="margin:14px 0 6px;">By language</div>';
   const le=Object.entries(langs).sort((a,b)=>b[1]-a[1]);

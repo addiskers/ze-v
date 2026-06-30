@@ -269,14 +269,24 @@ class PlivoMediaBridge:
                 pass
 
     async def _drain_then_hangup(self):
-        """Wait for the paced outbound buffer (the goodbye) to finish sending, give
-        Plivo's own playout a moment to flush, then hang up the PSTN call."""
+        """Hang up gently: wait until the paced outbound buffer (the goodbye) has
+        been STABLY empty (so trailing audio is fully sent, never cut mid-word),
+        then give Plivo's own playout a gentle beat to finish before hanging up."""
         import dialer
-        for _ in range(400):                       # up to ~8s
+        try:
+            grace = float(os.getenv("CALL_HANGUP_GRACE_SECONDS", "2.5"))
+        except ValueError:
+            grace = 2.5
+        stable = 0
+        for _ in range(600):                       # up to ~12s
             if self._out_frames.empty() and not self._residual:
-                break
+                stable += 1
+                if stable >= 10:                   # ~0.2s of continuous silence sent
+                    break
+            else:
+                stable = 0                         # more audio arrived; keep waiting
             await asyncio.sleep(0.02)
-        await asyncio.sleep(1.2)                    # let Plivo flush its buffer
+        await asyncio.sleep(grace)                 # let Plivo finish playing + a natural pause
         if self.call_id:
             await dialer.hangup_call(self.call_id)
 

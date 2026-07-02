@@ -131,6 +131,7 @@ class PlivoMediaBridge:
         self._residual = bytearray()
         self._started = False
         self._call_end_emitted = False
+        self._pending_hangup_task = None
 
     # ---- outbound (Gemini -> Plivo) ----
 
@@ -306,12 +307,32 @@ class PlivoMediaBridge:
         except asyncio.CancelledError:
             pass
 
+    def _schedule_end(self):
+        """Schedule the hangup after a grace window (see _grace_then_hangup)."""
+        if self._pending_hangup_task and not self._pending_hangup_task.done():
+            return
+        self._pending_hangup_task = asyncio.create_task(self._grace_then_hangup())
+
+    async def _grace_then_hangup(self):
+        """After end_call, wait a short window so the member can jump back in. If
+        they speak, _gemini_loop cancels this task and the call continues; if they
+        stay silent, drain the goodbye audio and hang up."""
+        try:
+            grace = float(os.getenv("CALL_END_GRACE_SECONDS", "4"))
+        except ValueError:
+            grace = 4.0
+        try:
+            await asyncio.sleep(grace)
+        except asyncio.CancelledError:
+            return                          # caller resumed — do NOT hang up
+        await asyncio.shield(self._drain_then_hangup())
+
     async def _gemini_loop(self):
-        """Drive the Gemini Live session. Returns when the agent ends the call
-        (end_call -> drain + hangup) or on a Gemini error/stream end. When the
-        caller hangs up first, run() cancels this task; CancelledError then
-        propagates into start_session's async generator, whose finally closes the
-        live session immediately (so the AI is never left 'on hold')."""
+        """Drive the Gemini Live session. On end_call it schedules a hangup after a
+        grace window (cancelled if the caller keeps talking) rather than cutting
+        immediately. When the caller hangs up first, run() cancels this task;
+        CancelledError then propagates into start_session's async generator, whose
+        finally closes the live session immediately (so the AI is never 'on hold')."""
         try:
             async for event in self.gemini.start_session(
                 audio_input_queue=self.audio_input_queue,
@@ -327,10 +348,15 @@ class PlivoMediaBridge:
                         logger.error(f"Gemini error during Plivo call: {event}")
                         break
                     if etype == "end_call":
-                        logger.info("Agent requested end_call; hanging up")
-                        # Shield so a caller hangup mid-goodbye can't abandon the hangup.
-                        await asyncio.shield(self._drain_then_hangup())
-                        break
+                        logger.info("Agent requested end_call; will hang up after grace window")
+                        self._schedule_end()
+                        continue           # stay live during the grace window
+                    # Caller came back before the hangup fired -> cancel it, keep talking.
+                    if etype in ("user", "interrupted") and self._pending_hangup_task \
+                            and not self._pending_hangup_task.done():
+                        self._pending_hangup_task.cancel()
+                        self._pending_hangup_task = None
+                        logger.info("Caller resumed after goodbye; cancelling hangup")
         except asyncio.CancelledError:
             raise                          # caller hung up: let the generator finally close the session
         except Exception as e:
@@ -355,13 +381,13 @@ class PlivoMediaBridge:
                 return_when=asyncio.FIRST_COMPLETED,
             )
         finally:
-            for task in (gemini_task, plivo_task, sender_task, guard_task):
+            tasks = [gemini_task, plivo_task, sender_task, guard_task]
+            if self._pending_hangup_task:
+                tasks.append(self._pending_hangup_task)
+            for task in tasks:
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(
-                gemini_task, plivo_task, sender_task, guard_task,
-                return_exceptions=True,
-            )
+            await asyncio.gather(*tasks, return_exceptions=True)
             if self._started and not self._call_end_emitted:
                 self._call_end_emitted = True
                 await self._emit({"type": "call_end"})

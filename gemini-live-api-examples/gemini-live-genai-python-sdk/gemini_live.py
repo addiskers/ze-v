@@ -70,7 +70,7 @@ You MUST call record_rsvp exactly once per call to log the outcome. Silent — n
 - Clear decline → outcome_status "no"
 - Callback requested / busy / driving / no definite answer after the Maybe prompt → outcome_status "callback". Always pass callback_time_text (their words, verbatim). Whenever ANY delay or time is mentioned, ALSO compute callback_time_iso — an ISO-8601 time in IST based on the current IST date-time given above (e.g. "after 5 minutes" → now + 5 minutes; "in an hour" → now + 60 minutes; "tomorrow 6pm" → "2026-07-01T18:00:00+05:30"). Leave callback_time_iso empty only if no time at all was given.
 - Asked not to be contacted again → outcome_status "do_not_contact"
-If a member mentions any accompanying child, put it in note with their age (e.g. "son 16, accompanying"; "daughter 12, member ok with it").
+If a member mentions any accompanying child, put it in note with their age (e.g. "son 16, accompanying"; "daughter 10, member ok with it").
 Rules: call record_rsvp BEFORE you speak your closing line / end the call. If the call ends, drops, or there's no parseable answer and no other branch applies, record "callback" — never end a call without exactly one recorded outcome. A "Maybe" that resolves to Yes/No records yes/no (not callback). Ask for the RSVP at most ONCE per call.
 
 ## HANDLING EVERY RESPONSE
@@ -90,8 +90,8 @@ Busy / driving / in a meeting / can't talk: treat as a callback request — apol
 
 ## GUEST POLICY
 - This is an exclusive EO event — for EO Gujarat members, their spouses, and their immediate family. Spouses are warmly welcome to attend.
-- Children aged 14+: members' children 14 and above are welcome. If raised, confirm it and ask whether the child will accompany the member (note it, with age).
-- Children under 14: the age guideline for an EO event is a recommendation, based on the popularity of the guest and the content and format of the programme. If the member feels it's fine for their child to attend even below the recommended age, they're welcome to bring them along. Confirm warmly and note it (with age).
+- Children aged 12+: members' children 12 and above are welcome. If raised, confirm it and ask whether the child will accompany the member (note it, with age).
+- Children under 12: the age guideline for an EO event is a recommendation, based on the popularity of the guest and the content and format of the programme. If the member feels it's fine for their child to attend even below the recommended age, they're welcome to bring them along. Confirm warmly and note it (with age).
 - Friends / business associates / other guests: these are not included — it's an exclusive EO event for members, spouses and immediate family. Say so warmly; do NOT confirm friends or associates.
 
 ## HARD RULES
@@ -119,7 +119,7 @@ TOOLS = [
                 "callback_time_text": {"type": "string", "description": "For outcome_status='callback': the guest's preferred callback time in their own words (e.g. 'tomorrow evening', 'after 5 pm'). Empty if none given."},
                 "callback_time_iso": {"type": "string", "description": "For outcome_status='callback' when a time is implied: that time as ISO-8601 in India Standard Time computed from today's date (e.g. '2026-07-01T18:00:00+05:30'). Empty if no specific time."},
                 "guest_name": {"type": "string", "description": "The guest's name if they shared it, otherwise empty"},
-                "accompanying_children": {"type": "string", "description": "If any child will accompany the member, a short note including the child's age (e.g. 'son 16, accompanying'; 'daughter 12, member ok with under-14 guideline'). Empty otherwise."},
+                "accompanying_children": {"type": "string", "description": "If any child will accompany the member, a short note including the child's age (e.g. 'son 16, accompanying'; 'daughter 10, member ok with under-12 guideline'). Empty otherwise."},
                 "note": {"type": "string", "description": "Anything else notable the guest mentioned (e.g. 'travelling that week')"},
                 "attending": {"type": "boolean", "description": "Deprecated; set true only when outcome_status='yes'. Prefer outcome_status."}
             },

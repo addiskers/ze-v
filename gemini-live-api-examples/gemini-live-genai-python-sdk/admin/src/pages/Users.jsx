@@ -61,7 +61,7 @@ export default function Users() {
               <tr key={u.id}>
                 <td style={{ fontWeight: 600 }}>{u.username}{u.id === me?.id && <span className="muted"> (you)</span>}</td>
                 <td>{u.name || <span className="muted">—</span>}</td>
-                <td><span className={`pill ${u.role === 'eo_admin' ? 'green' : 'blue'}`}>{u.role === 'eo_admin' ? 'Admin' : 'Agent'}</span></td>
+                <td><span className={`pill ${u.role === 'eo_admin' ? 'green' : 'blue'}`}>{u.role === 'eo_admin' ? 'Superadmin' : 'Admin'}</span></td>
                 <td><span className={`pill ${u.active ? 'valid' : 'invalid'}`}>{u.active ? 'Active' : 'Disabled'}</span></td>
                 <td>{fmtDate(u.created_at)}</td>
                 <td>
@@ -91,8 +91,8 @@ export default function Users() {
           <div className="row"><label>Password</label><input type="password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} placeholder="min 6 characters" /></div>
           <div className="row"><label>Role</label>
             <select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>
-              <option value="eo_agent">Agent — Dashboard, Create Campaign, My Campaigns, Profile</option>
-              <option value="eo_admin">Admin — full access incl. Users &amp; Settings</option>
+              <option value="eo_agent">Admin — their own campaigns &amp; logs only, no cost</option>
+              <option value="eo_admin">Superadmin — full access, all data, cost, Users &amp; Settings</option>
             </select>
           </div>
         </Modal>

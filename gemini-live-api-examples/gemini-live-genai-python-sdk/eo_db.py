@@ -298,11 +298,14 @@ def add_campaign_contacts(campaign_id: int, contacts) -> int:
     return n
 
 
-def list_campaigns(q=None, sort="created_at", direction="desc", limit=50, offset=0):
+def list_campaigns(q=None, sort="created_at", direction="desc", limit=50, offset=0, created_by=None):
     where, params = [], []
     if q:
         where.append("name LIKE ?")
         params.append(f"%{q}%")
+    if created_by is not None:
+        where.append("created_by = ?")
+        params.append(int(created_by))
     wsql = ("WHERE " + " AND ".join(where)) if where else ""
     col = sort if sort in _CAMPAIGN_SORTS else "created_at"
     dir_sql = "ASC" if str(direction).lower() == "asc" else "DESC"
@@ -312,6 +315,10 @@ def list_campaigns(q=None, sort="created_at", direction="desc", limit=50, offset
         tuple(params) + (int(limit), int(offset)),
     )
     return {"items": rows, "total": int(total)}
+
+
+def campaign_ids_by_owner(user_id) -> list:
+    return [r["id"] for r in _rows("SELECT id FROM campaigns WHERE created_by = ?", (int(user_id),))]
 
 
 def campaign_progress(campaign_id: int) -> dict:

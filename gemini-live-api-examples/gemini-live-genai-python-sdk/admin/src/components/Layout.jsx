@@ -1,17 +1,15 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth.jsx'
 import {
-  IconDashboard, IconPlus, IconCampaigns, IconLogs, IconClock,
-  IconContacts, IconUsers, IconSettings, IconUser, IconLogout,
+  IconDashboard, IconPlus, IconCampaigns, IconUsers, IconSettings, IconUser, IconLogout,
 } from './icons.jsx'
 
+// Superadmin nav — Call Logs / Scheduler live on the Dashboard, Contacts live in
+// Create Campaign, so they aren't separate items.
 const FULL_NAV = [
   { to: '/', label: 'Dashboard', icon: IconDashboard, end: true },
   { to: '/create-campaign', label: 'Create Campaign', icon: IconPlus },
   { to: '/campaigns', label: 'My Campaigns', icon: IconCampaigns },
-  { to: '/call-logs', label: 'Call Logs', icon: IconLogs },
-  { to: '/scheduler', label: 'Scheduler', icon: IconClock },
-  { to: '/contacts', label: 'Contacts', icon: IconContacts },
   { to: '/users', label: 'Users', icon: IconUsers, adminOnly: true },
   { to: '/settings', label: 'Settings', icon: IconSettings, adminOnly: true },
 ]
@@ -70,7 +68,7 @@ export default function Layout() {
           <div className="userchip">
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: '0.82rem', fontWeight: 600 }}>{user?.name || user?.username}</div>
-              <div className="page-sub">{isAdmin ? 'EO Admin' : 'EO Agent'}</div>
+              <div className="page-sub">{isAdmin ? 'Superadmin' : 'Admin'}</div>
             </div>
             <div className="avatar">{initials(user?.name, user?.username)}</div>
           </div>

@@ -8,7 +8,7 @@ callbacks; adds contacts, campaigns, and users (later phases). The Super-Admin
 import csv
 import io
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
@@ -91,6 +91,20 @@ def _strip_full(call: dict, include_cost: bool = False) -> dict:
     return c
 
 
+# ── per-role data scoping ────────────────────────────────────────────────────
+def _scope_ids(user):
+    """Campaign-id strings this user may see, or None for full access (eo_admin =
+    Superadmin). An eo_agent (Admin) only sees campaigns they created + the calls
+    from those campaigns."""
+    if user["role"] == "eo_admin":
+        return None
+    return {str(i) for i in eo_db.campaign_ids_by_owner(user["id"])}
+
+
+def _owns_or_admin(user, campaign) -> bool:
+    return bool(campaign) and (user["role"] == "eo_admin" or campaign.get("created_by") == user["id"])
+
+
 # ── auth ─────────────────────────────────────────────────────────────────────
 @router.post("/login")
 async def login(request: Request):
@@ -164,12 +178,16 @@ async def users_update(user_id: int, request: Request):
     return {"ok": True}
 
 
-# ── dashboard + call logs (cost-free) ────────────────────────────────────────
+# ── dashboard + call logs (cost for Superadmin; Admins see only their calls) ──
 @router.get("/summary")
 async def eo_summary(request: Request):
     user = eo_auth.require_eo(request)
     include_cost = user["role"] == "eo_admin"
-    return JSONResponse(_strip_summary(await store.summary(_filters_from_request(request)), include_cost))
+    filters = _filters_from_request(request)
+    scope = _scope_ids(user)
+    if scope is not None:
+        filters["campaign_ids"] = scope
+    return JSONResponse(_strip_summary(await store.summary(filters), include_cost))
 
 
 @router.get("/calls")
@@ -177,6 +195,9 @@ async def eo_calls(request: Request):
     user = eo_auth.require_eo(request)
     include_cost = user["role"] == "eo_admin"
     filters = _filters_from_request(request)
+    scope = _scope_ids(user)
+    if scope is not None:
+        filters["campaign_ids"] = scope
     if filters.get("limit") is None:
         filters["limit"] = 500
     data = await store.list_calls(filters)
@@ -189,6 +210,9 @@ async def eo_calls_csv(request: Request):
     user = eo_auth.require_eo(request)
     include_cost = user["role"] == "eo_admin"
     filters = _filters_from_request(request)
+    scope = _scope_ids(user)
+    if scope is not None:
+        filters["campaign_ids"] = scope
     filters["limit"] = None
     data = await store.list_calls(filters)
     items = _label_and_strip(data["items"], include_cost)
@@ -212,10 +236,27 @@ async def eo_call_detail(call_id: str, request: Request):
     call = await store.load_call(call_id)
     if not call:
         raise HTTPException(status_code=404, detail="Call not found")
+    scope = _scope_ids(user)
+    if scope is not None and str(call.get("campaign_id") or "") not in scope:
+        raise HTTPException(status_code=404, detail="Call not found")
     return JSONResponse(_strip_full(call, include_cost))
 
 
 # ── campaigns ────────────────────────────────────────────────────────────────
+def _whole_int(v, name, lo, hi):
+    """Accept only a whole number in [lo, hi]; reject decimals / junk with a 400."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{name} must be a whole number")
+    if f != int(f):
+        raise HTTPException(status_code=400, detail=f"{name} must be a whole number (no decimals)")
+    n = int(f)
+    if n < lo or n > hi:
+        raise HTTPException(status_code=400, detail=f"{name} must be between {lo} and {hi}")
+    return n
+
+
 def _parse_iso(s):
     try:
         dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
@@ -228,7 +269,7 @@ def _parse_iso(s):
 
 @router.get("/campaigns")
 async def campaigns_list(request: Request):
-    eo_auth.require_eo(request)
+    user = eo_auth.require_eo(request)
     qp = request.query_params
     data = eo_db.list_campaigns(
         q=qp.get("q") or None,
@@ -236,6 +277,7 @@ async def campaigns_list(request: Request):
         direction=qp.get("dir") or "desc",
         limit=int(qp.get("limit") or 50),
         offset=int(qp.get("offset") or 0),
+        created_by=None if user["role"] == "eo_admin" else user["id"],
     )
     for c in data["items"]:
         c["progress"] = eo_db.campaign_progress(c["id"])
@@ -244,8 +286,10 @@ async def campaigns_list(request: Request):
 
 @router.get("/campaigns/active")
 async def campaign_active(request: Request):
-    eo_auth.require_eo(request)
+    user = eo_auth.require_eo(request)
     c = eo_db.active_campaign()
+    if c and not _owns_or_admin(user, c):
+        c = None                       # Admins only see their own live campaign
     if c:
         c["progress"] = eo_db.campaign_progress(c["id"])
     return JSONResponse({"campaign": c})
@@ -253,9 +297,9 @@ async def campaign_active(request: Request):
 
 @router.get("/campaigns/{campaign_id}")
 async def campaign_detail(campaign_id: int, request: Request):
-    eo_auth.require_eo(request)
+    user = eo_auth.require_eo(request)
     c = eo_db.get_campaign_full(campaign_id)
-    if not c:
+    if not c or not _owns_or_admin(user, c):
         raise HTTPException(status_code=404, detail="Campaign not found")
     return JSONResponse(c)
 
@@ -278,14 +322,14 @@ async def campaign_create(request: Request):
     start_dt = _parse_iso(body.get("start_at"))
     if not start_dt:
         raise HTTPException(status_code=400, detail="Valid start date/time is required")
+    # reject past-dated campaigns (small grace for clock skew / "start now")
+    if start_dt < datetime.now(timezone.utc) - timedelta(minutes=2):
+        raise HTTPException(status_code=400, detail="Start time is in the past. Pick the current time or later.")
 
-    # clamp the callback config to the documented bounds
-    try:
-        delay_h = max(0, int(body.get("callback_delay_hours", 4)))
-        max_day = min(10, max(1, int(body.get("callback_max_per_day", 3))))
-        days = min(10, max(1, int(body.get("callback_days", 1))))
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Callback settings must be whole numbers")
+    # callback config — whole numbers only, within documented bounds
+    delay_h = _whole_int(body.get("callback_delay_hours", 4), "Call-back hours", 0, 720)
+    max_day = _whole_int(body.get("callback_max_per_day", 3), "Attempts per day", 1, 10)
+    days = _whole_int(body.get("callback_days", 1), "Call-back days", 1, 10)
 
     ids = body.get("contact_ids") or []
     contacts = [c for c in eo_db.get_contacts_by_ids(ids) if c.get("status") == "valid"]
@@ -304,7 +348,9 @@ async def campaign_create(request: Request):
 
 @router.post("/campaigns/{campaign_id}/cancel")
 async def campaign_cancel(campaign_id: int, request: Request):
-    eo_auth.require_eo(request)
+    user = eo_auth.require_eo(request)
+    if not _owns_or_admin(user, eo_db.get_campaign(campaign_id)):
+        raise HTTPException(status_code=404, detail="Campaign not found")
     ok = eo_db.cancel_campaign(campaign_id)
     if not ok:
         raise HTTPException(status_code=400, detail="Campaign is not cancellable (already completed or cancelled)")
@@ -313,7 +359,9 @@ async def campaign_cancel(campaign_id: int, request: Request):
 
 @router.get("/campaigns/{campaign_id}/contacts")
 async def campaign_contacts(campaign_id: int, request: Request):
-    eo_auth.require_eo(request)
+    user = eo_auth.require_eo(request)
+    if not _owns_or_admin(user, eo_db.get_campaign(campaign_id)):
+        raise HTTPException(status_code=404, detail="Campaign not found")
     qp = request.query_params
     return JSONResponse(eo_db.list_campaign_contacts(
         campaign_id, status=qp.get("status") or None,
@@ -323,7 +371,9 @@ async def campaign_contacts(campaign_id: int, request: Request):
 @router.post("/campaigns/{campaign_id}/contacts/{cc_id}/retry")
 async def campaign_contact_retry(campaign_id: int, cc_id: int, request: Request):
     """Re-queue one recipient for an immediate dial (clears the backoff)."""
-    eo_auth.require_eo(request)
+    user = eo_auth.require_eo(request)
+    if not _owns_or_admin(user, eo_db.get_campaign(campaign_id)):
+        raise HTTPException(status_code=404, detail="Campaign not found")
     eo_db.cc_update(int(cc_id), call_status="pending", next_attempt_at=None, last_error=None)
     return {"ok": True}
 
@@ -399,7 +449,11 @@ async def eo_callbacks(request: Request):
     include_cost = user["role"] == "eo_admin"
     qp = request.query_params
     statuses = set(s.strip() for s in qp["status"].split(",")) if qp.get("status") else None
-    items = _label_and_strip(await store.list_callbacks(statuses), include_cost)
+    items = await store.list_callbacks(statuses)
+    scope = _scope_ids(user)
+    if scope is not None:
+        items = [c for c in items if str(c.get("campaign_id") or "") in scope]
+    items = _label_and_strip(items, include_cost)
     state = await store.load_scheduler_state()
     return JSONResponse({"items": items, "scheduler_enabled": scheduler.is_enabled(),
                          "paused_until": state.get("paused_until")})

@@ -1,9 +1,9 @@
-# EO Gujarat — "An Evening with Radha" (Gemini Live voice demo)
+# EO Gujarat — "An Evening with GvoxAi" (Gemini Live voice demo)
 
 A real-time **voice demo** built on the Gemini Live API ([Google Gen AI Python SDK](https://github.com/googleapis/python-genai)
-backend + vanilla-JS frontend). **Radha**, an AI host with a warm female **Indian-English** voice,
+backend + vanilla-JS frontend). **GvoxAi**, an AI host with a warm female **Indian-English** voice,
 calls a guest and personally invites them to the **EO Gujarat evening in Ahmedabad on the 10th of
-July**. The guest answers **"Yes"** or **"No"** out loud; Radha responds and her RSVP is captured
+July**. The guest answers **"Yes"** or **"No"** out loud; GvoxAi responds and her RSVP is captured
 live on screen. Calls can run **in the browser** or be placed to a **real phone via Twilio**.
 
 The FastAPI backend proxies the browser/phone WebSocket to Gemini, records each call, and tracks
@@ -30,19 +30,19 @@ uv run main.py
 ## How the demo works
 
 1. **Invite screen** — a branded EO Gujarat card. Click **Start the call** (browser), or enter a
-   number and **Get Radha to call your phone** (Twilio).
-2. **Radha greets first** — on connect she opens with her invitation and asks if she'll see you on
+   number and **Get GvoxAi to call your phone** (Twilio).
+2. **GvoxAi greets first** — on connect she opens with her invitation and asks if she'll see you on
    the 10th.
-3. **You answer by voice** — Radha replies warmly for *Yes* / graciously for *No*, and silently
+3. **You answer by voice** — GvoxAi replies warmly for *Yes* / graciously for *No*, and silently
    calls the `record_rsvp` tool.
-4. **Live RSVP card + transcript + a glowing "Radha" orb** update in real time.
+4. **Live RSVP card + transcript + a glowing "GvoxAi" orb** update in real time.
 5. **Call summary** — the end screen shows the decision, duration and full transcript.
 
 ## Customising
 
 | What | Where |
 | --- | --- |
-| Radha's persona / script | `SYSTEM_INSTRUCTION` in `gemini_live.py` |
+| GvoxAi's persona / script | `SYSTEM_INSTRUCTION` in `gemini_live.py` |
 | Voice (default **Aoede**, female) | `voice_name=` in `gemini_live.py` (`start_session`) |
 | Accent / language (default **en-IN**) | `language_code=` in `gemini_live.py` |
 | Model id | `MODEL` in `.env` (default `gemini-3.1-flash-live-preview`) |
@@ -70,7 +70,7 @@ can reach `/twilio/voice`.
 ```
 /
 ├── main.py            # FastAPI server: /ws, Twilio, /call-me, /live, /admin, EVENT data + record_rsvp
-├── gemini_live.py     # Gemini Live wrapper: Radha persona, record_rsvp tool, voice/accent
+├── gemini_live.py     # Gemini Live wrapper: GvoxAi persona, record_rsvp tool, voice/accent
 ├── recorder.py        # Per-call recording (RSVP outcome flag)
 ├── store.py, pricing.py, twilio_handler.py
 └── frontend/

@@ -1,6 +1,6 @@
 # EO AI Calling Platform — deploy notes
 
-The EO admin platform is added **on top of** the existing Radha app. Nothing about the
+The EO admin platform is added **on top of** the existing GvoxAi app. Nothing about the
 demo changes: `GET /` and the browser `/ws` stay exactly as-is.
 
 ## What runs where (all coexist)

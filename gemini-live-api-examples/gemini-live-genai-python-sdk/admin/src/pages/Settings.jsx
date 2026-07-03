@@ -33,7 +33,7 @@ export default function Settings() {
       <div className="card">
         <div className="panel-head"><h3>About</h3></div>
         <div className="muted" style={{ fontSize: '0.85rem', lineHeight: 1.7 }}>
-          EO AI Calling Platform. Campaigns dial paced outbound calls with Radha, the EO voice agent.
+          EO AI Calling Platform. Campaigns dial paced outbound calls with GvoxAi, the EO voice agent.
           Only one campaign can be scheduled or live at a time. Turning the scheduler off pauses all
           outbound dialing and callbacks.
         </div>

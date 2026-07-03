@@ -27,7 +27,7 @@ export default function Profile() {
         <div className="stack" style={{ gap: 14 }}>
           <div><label>Name</label><div>{user?.name || '—'}</div></div>
           <div><label>Username</label><div>{user?.username}</div></div>
-          <div><label>Role</label><span className={`pill ${isAdmin ? 'green' : 'blue'}`}>{isAdmin ? 'EO Admin' : 'EO Agent'}</span></div>
+          <div><label>Role</label><span className={`pill ${isAdmin ? 'green' : 'blue'}`}>{isAdmin ? 'Superadmin' : 'Admin'}</span></div>
         </div>
       </div>
 

@@ -212,7 +212,7 @@ function CallDrawer({ call, onClose }) {
             : Array.isArray(msgs) && msgs.length ? msgs.map((m, i) => (
               <div key={i} style={{ fontSize: '0.82rem' }}>
                 <b style={{ color: (m.role === 'user' || m.speaker === 'user') ? 'var(--blue)' : 'var(--green)' }}>
-                  {(m.role || m.speaker) === 'user' ? 'Caller' : 'Radha'}:
+                  {(m.role || m.speaker) === 'user' ? 'Caller' : 'GvoxAi'}:
                 </b>{' '}
                 {m.text || m.content || m.transcript}
               </div>

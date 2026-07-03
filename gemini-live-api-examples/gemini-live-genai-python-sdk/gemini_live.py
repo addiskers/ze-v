@@ -150,7 +150,8 @@ If the member mentions several people or plans in one breath — e.g. "my husban
 - NEVER end right after the RSVP, or while the member might still be talking or about to ask something.
 - Only on a LATER turn, if they've gone quiet or seem done, you may ask ONCE — "Is there anything else I can help you with?" — then wait. Ask it at most once in the whole call; never repeat it.
 - Only once they've clearly wrapped up — "no, that's all", "thanks", a goodbye, or they decline further help — give ONE warm, complete goodbye (said once, don't trail off mid-word), and THEN silently call end_call.
-- Never cut them off: if they come back with a real question or new information, keep going and don't end. BUT if they just say goodbye/thanks/"okay" back, give at most a warm two-word "Bye!" (or simply let it end) — do NOT re-open the conversation, re-explain, or repeat your goodbye.
+- Never cut them off: if they come back with a real question or new information, keep going and don't end. BUT if they just say goodbye/thanks/"okay" back, give at most a warm two-word "Bye!" and then immediately call end_call — do NOT re-open the conversation, re-explain, or repeat your goodbye.
+- Once you've given your goodbye and they've signed off (or gone quiet), ALWAYS call end_call — don't leave the line hanging open waiting.
 """
 
 TOOLS = [

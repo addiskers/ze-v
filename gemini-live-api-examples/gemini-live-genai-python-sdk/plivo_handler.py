@@ -160,6 +160,9 @@ class PlivoMediaBridge:
         self._started = False
         self._call_end_emitted = False
         self._pending_hangup_task = None
+        # Auto-hangup signals (so the call ends even if the agent never calls end_call):
+        self._rsvp_recorded = False              # set True once record_rsvp fires
+        self._last_activity = time.monotonic()   # last time either party spoke / a turn ended
 
     # ---- outbound (Gemini -> Plivo) ----
 
@@ -307,7 +310,12 @@ class PlivoMediaBridge:
                     break
 
         except Exception as e:
-            logger.error(f"Plivo receive error: {e}")
+            # WebSocket close 1000 is a normal caller hangup, not an error — log it quietly.
+            code = e.args[0] if getattr(e, "args", None) else None
+            if code == 1000:
+                logger.info("Plivo stream closed by caller (hangup)")
+            else:
+                logger.error(f"Plivo receive error: {e}")
 
     async def _emit(self, event):
         """Send event to live transcript watchers."""
@@ -355,6 +363,33 @@ class PlivoMediaBridge:
         except asyncio.CancelledError:
             pass
 
+    async def _idle_hangup_guard(self):
+        """Keyword-free auto-hangup: end the call when the line goes quiet — quickly once
+        the RSVP is recorded (task done), and after a longer window for a dead/abandoned
+        call. This is what guarantees the call ends even if the agent never calls end_call.
+        The actual hangup goes through _schedule_end (idempotent + grace-cancellable)."""
+        def _cfg(name, default):
+            try:
+                return float(os.getenv(name, str(default)))
+            except (TypeError, ValueError):
+                return default
+        post_rsvp = _cfg("EO_POST_RSVP_IDLE_SECONDS", 5.0)
+        dead_air = _cfg("EO_IDLE_HANGUP_SECONDS", 25.0)
+        try:
+            while True:
+                await asyncio.sleep(1.0)
+                if self._pending_hangup_task and not self._pending_hangup_task.done():
+                    continue                       # already ending
+                idle = time.monotonic() - self._last_activity
+                if self._rsvp_recorded and idle >= post_rsvp:
+                    logger.info(f"Idle {idle:.0f}s after RSVP; scheduling hangup")
+                    self._schedule_end()
+                elif idle >= dead_air:
+                    logger.info(f"Idle {idle:.0f}s (dead air); scheduling hangup")
+                    self._schedule_end()
+        except asyncio.CancelledError:
+            pass
+
     def _schedule_end(self):
         """Schedule the hangup after a grace window (see _grace_then_hangup)."""
         if self._pending_hangup_task and not self._pending_hangup_task.done():
@@ -396,21 +431,30 @@ class PlivoMediaBridge:
                     if etype == "error":
                         logger.error(f"Gemini error during Plivo call: {event}")
                         break
+                    # Feed the idle-hangup guard: mark the task done + stamp any activity.
+                    if etype == "tool_call" and event.get("name") == "record_rsvp":
+                        self._rsvp_recorded = True
+                    if etype in ("user", "interrupted", "turn_complete"):
+                        self._last_activity = time.monotonic()
                     if etype == "end_call":
                         logger.info("Agent requested end_call; will hang up after grace window")
                         self._schedule_end()
                         continue           # stay live during the grace window
-                    # After the agent's goodbye + end_call, decide what a caller utterance means:
-                    #  - a simple "bye/thanks/okay"  -> let the hangup proceed (don't re-engage)
-                    #  - a real question / new info  -> cancel the hangup and keep talking
-                    #  - a bare interrupt (no text)  -> wait for the text before deciding
+                    # Decide what a caller utterance means around the end of the call.
                     if self._pending_hangup_task and not self._pending_hangup_task.done():
+                        #  - a simple "bye/thanks/okay" -> let the hangup proceed (don't re-engage)
+                        #  - a real question / new info -> cancel the hangup and keep talking
+                        #  - a bare interrupt (no text) -> wait for the text before deciding
                         if etype == "user" and _looks_like_goodbye(event.get("text")):
                             logger.info("Caller said goodbye; letting the hangup proceed")
                         elif etype == "user":
                             self._pending_hangup_task.cancel()
                             self._pending_hangup_task = None
                             logger.info("Caller resumed with a follow-up; cancelling hangup")
+                    elif etype == "user" and _looks_like_goodbye(event.get("text")):
+                        # Caller signed off but the agent never called end_call -> end it ourselves.
+                        logger.info("Caller said goodbye; scheduling hangup (agent hadn't ended)")
+                        self._schedule_end()
         except asyncio.CancelledError:
             raise                          # caller hung up: let the generator finally close the session
         except Exception as e:
@@ -428,6 +472,7 @@ class PlivoMediaBridge:
         plivo_task = asyncio.create_task(self.handle_plivo_messages())
         sender_task = asyncio.create_task(self._outbound_sender())
         guard_task = asyncio.create_task(self._max_duration_guard())
+        idle_task = asyncio.create_task(self._idle_hangup_guard())
 
         try:
             await asyncio.wait(
@@ -435,7 +480,7 @@ class PlivoMediaBridge:
                 return_when=asyncio.FIRST_COMPLETED,
             )
         finally:
-            tasks = [gemini_task, plivo_task, sender_task, guard_task]
+            tasks = [gemini_task, plivo_task, sender_task, guard_task, idle_task]
             if self._pending_hangup_task:
                 tasks.append(self._pending_hangup_task)
             for task in tasks:

@@ -1,0 +1,19 @@
+services:
+  eo-radha:
+    build: .
+    container_name: eo-radha
+    env_file:
+      - .env
+    environment:
+      # override whatever is in .env so the container is self-consistent
+      - PORT=8000
+      - DATA_DIR=/var/eo-data
+    ports:
+      # bound to localhost only — Caddy on the host terminates TLS and proxies in
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - eo-data:/var/eo-data
+    restart: unless-stopped
+
+volumes:
+  eo-data:

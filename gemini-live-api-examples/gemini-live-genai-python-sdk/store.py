@@ -114,6 +114,9 @@ def _matches(meta, filters):
     src = filters.get("source")
     if src and meta.get("source") != src:
         return False
+    cid = filters.get("campaign_id")
+    if cid not in (None, "") and str(meta.get("campaign_id") or "") != str(cid):
+        return False
     booking = filters.get("booking")
     if booking is not None:
         want = booking in (True, "1", "true", "yes")
@@ -133,6 +136,25 @@ def _matches(meta, filters):
         if q not in hay:
             return False
     return True
+
+
+async def find_campaign_call(campaign_id, phone, since_iso=None):
+    """Latest call record matching (campaign_id, phone) started at/after since_iso.
+    Used by the campaign runner to detect answered vs no-answer. Index-only (no disk)."""
+    with _LOCK:
+        metas = list(_INDEX.values())
+    best = None
+    for m in metas:
+        if str(m.get("campaign_id") or "") != str(campaign_id):
+            continue
+        if (m.get("caller") or "") != phone:
+            continue
+        st = m.get("started_at") or ""
+        if since_iso and st < since_iso:
+            continue
+        if best is None or st > (best.get("started_at") or ""):
+            best = m
+    return best
 
 
 async def list_calls(filters=None):

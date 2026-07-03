@@ -24,6 +24,12 @@ import scheduler
 import store
 from recorder import CallRecorder
 
+# EO Admin platform (campaigns / contacts / users) — SQLite + React SPA.
+import campaign_runner
+import eo_api
+import eo_auth
+import eo_db
+
 # Load environment variables
 load_dotenv()
 
@@ -96,12 +102,12 @@ live_watchers: set = set()
 _pending_call_meta: dict = {}
 
 
-def _remember_call_meta(call_uuid, caller, gen, origin, name=""):
+def _remember_call_meta(call_uuid, caller, gen, origin, name="", campaign_id=""):
     if not call_uuid:
         return
     _pending_call_meta[call_uuid] = {
         "caller": caller or "", "gen": gen or "", "origin": origin or "",
-        "name": name or "",
+        "name": name or "", "campaign_id": campaign_id or "",
     }
     if len(_pending_call_meta) > 200:                 # bound memory; drop oldest
         for k in list(_pending_call_meta)[:50]:
@@ -134,6 +140,28 @@ app.add_middleware(
 # Serve static files
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
+# EO Admin API (cost-free, session-gated). The demo, /superadmin, and this all coexist.
+app.include_router(eo_api.router)
+
+# ── EO Admin React SPA (built to admin/dist), served at /admin/* ──────────────
+# Coexists with the demo ("/") and the vanilla Super-Admin ("/superadmin").
+_ADMIN_DIST = os.path.join(os.path.dirname(__file__), "admin", "dist")
+if os.path.isdir(os.path.join(_ADMIN_DIST, "assets")):
+    app.mount("/admin/assets", StaticFiles(directory=os.path.join(_ADMIN_DIST, "assets")), name="admin-assets")
+
+
+@app.get("/admin")
+@app.get("/admin/{path:path}")
+async def admin_spa(path: str = ""):
+    """Serve the React admin SPA; all client routes fall back to index.html."""
+    index = os.path.join(_ADMIN_DIST, "index.html")
+    if not os.path.isfile(index):
+        return HTMLResponse(
+            "<h3>EO Admin SPA not built yet. Run <code>npm install &amp;&amp; npm run build</code> in <code>admin/</code>.</h3>",
+            status_code=503,
+        )
+    return FileResponse(index)
+
 
 @app.on_event("startup")
 async def _startup():
@@ -145,22 +173,32 @@ async def _startup():
     except Exception as e:
         logger.error(f"Call store init failed: {e}")
     try:
+        eo_db.init()
+        eo_auth.seed_admin()
+    except Exception as e:
+        logger.error(f"EO admin DB init failed: {e}")
+    try:
         app.state.callback_task = asyncio.create_task(scheduler.run_loop())
     except Exception as e:
         logger.error(f"Failed to start callback scheduler: {e}")
+    try:
+        app.state.campaign_task = asyncio.create_task(campaign_runner.run_loop())
+    except Exception as e:
+        logger.error(f"Failed to start campaign runner: {e}")
 
 
 @app.on_event("shutdown")
 async def _shutdown():
-    task = getattr(app.state, "callback_task", None)
-    if task:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
+    for attr in ("callback_task", "campaign_task"):
+        task = getattr(app.state, attr, None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
 
 
 @app.get("/")
@@ -337,10 +375,11 @@ async def plivo_answer(request: Request):
     # Optional per-call first name (from /call-me or the scheduler); overrides the
     # directory lookup for personalising the greeting.
     name = qp.get("name", "")
+    campaign_id = qp.get("campaign", "")
     # Stash by Plivo CallUUID so the media-stream WS can recover caller/generation/name
     # even though extraHeaders don't propagate on bidirectional streams.
     call_uuid = qp.get("CallUUID") or qp.get("callUUID") or qp.get("RequestUUID") or ""
-    _remember_call_meta(call_uuid, caller, gen, origin, name=name)
+    _remember_call_meta(call_uuid, caller, gen, origin, name=name, campaign_id=campaign_id)
     hdr_pairs = []
     if caller:
         hdr_pairs.append(f"X-Caller={quote(caller)}")
@@ -395,8 +434,12 @@ async def plivo_media_stream(websocket: WebSocket):
                 generation = int(meta.get("gen") or event.get("generation") or 0)
             except (TypeError, ValueError):
                 generation = 0
+            try:
+                campaign_id = int(meta.get("campaign_id")) if meta.get("campaign_id") else None
+            except (TypeError, ValueError):
+                campaign_id = None
             await recorder.open(source="plivo", call_sid=event.get("call_sid") or None,
-                                caller=caller, generation=generation)
+                                caller=caller, generation=generation, campaign_id=campaign_id)
         elif etype == "call_end":
             await recorder.close()
         else:
@@ -1294,9 +1337,9 @@ async def _refresh_call_price(call_id):
     return updated
 
 
-@app.get("/admin")
-async def admin_dashboard():
-    """Admin dashboard — call logs, transcripts and real costing."""
+@app.get("/superadmin")
+async def superadmin_dashboard():
+    """Super-Admin dashboard — call logs, transcripts and real costing (unchanged; moved from /admin)."""
     return HTMLResponse(ADMIN_DASHBOARD_HTML)
 
 

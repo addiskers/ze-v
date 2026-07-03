@@ -74,7 +74,7 @@ class CallRecorder:
 
     # ---- lifecycle ---------------------------------------------------------
 
-    async def open(self, source, call_sid=None, caller=None, generation=0):
+    async def open(self, source, call_sid=None, caller=None, generation=0, campaign_id=None):
         try:
             call_id = uuid.uuid4().hex[:16]
             if not call_sid:
@@ -85,6 +85,7 @@ class CallRecorder:
                 "call_sid": call_sid,
                 "source": source,                 # 'plivo' | 'browser'
                 "caller": caller,
+                "campaign_id": campaign_id,        # None for demo/RSVP calls; set for campaign dials
                 "generation": int(generation or 0),  # 0=original, n=nth auto-callback redial
                 "started_at": self._started_ts.isoformat(),
                 "ended_at": None,

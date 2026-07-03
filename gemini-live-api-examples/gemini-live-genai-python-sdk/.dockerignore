@@ -1,0 +1,17 @@
+# keep the image small + secrets/local state out of it
+.git
+.env
+*.env
+!.env.example
+admin/node_modules
+admin/dist
+node_modules
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+data
+*.md
+.vscode
+.idea

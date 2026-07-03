@@ -43,7 +43,7 @@ def _place_call_sync(to_number, answer_url):
 
 
 async def place_call(to_number, *, base_url=None, request=None, gen=0, origin_call_id=None,
-                     name=""):
+                     name="", campaign_id=None):
     """
     Place one outbound Plivo call that bridges to the agent.
 
@@ -70,6 +70,8 @@ async def place_call(to_number, *, base_url=None, request=None, gen=0, origin_ca
         answer_url += f"&gen={int(gen)}"
     if origin_call_id:
         answer_url += f"&origin={quote(str(origin_call_id))}"
+    if campaign_id:
+        answer_url += f"&campaign={int(campaign_id)}"
 
     try:
         loop = asyncio.get_running_loop()

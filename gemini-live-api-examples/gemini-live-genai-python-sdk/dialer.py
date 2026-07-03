@@ -42,13 +42,15 @@ def _place_call_sync(to_number, answer_url):
         resp.get("request_uuid") if isinstance(resp, dict) else None)
 
 
-async def place_call(to_number, *, base_url=None, request=None, gen=0, origin_call_id=None):
+async def place_call(to_number, *, base_url=None, request=None, gen=0, origin_call_id=None,
+                     name=""):
     """
     Place one outbound Plivo call that bridges to the agent.
 
     Returns {"success": True, "call_uuid": ..., "to": ...} or {"error": "..."}.
     `gen` / `origin_call_id` are threaded into the answer_url so a re-dialed call
     knows it is a callback (used by the scheduler to cap callback generations).
+    `name`, when given, personalises the agent's greeting for this call.
     """
     if not to_number:
         return {"error": "Missing 'to' number"}
@@ -62,6 +64,8 @@ async def place_call(to_number, *, base_url=None, request=None, gen=0, origin_ca
         return {"error": "No PUBLIC_URL configured; cannot build answer_url"}
 
     answer_url = f"{base}/plivo/answer?caller={quote(to_number)}"
+    if name:
+        answer_url += f"&name={quote(str(name))}"
     if gen:
         answer_url += f"&gen={int(gen)}"
     if origin_call_id:

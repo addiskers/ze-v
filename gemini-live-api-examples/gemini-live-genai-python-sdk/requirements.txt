@@ -1,6 +1,9 @@
 fastapi
 uvicorn
-google-genai
+# >=2.10 exposes async function calling (Behavior.NON_BLOCKING + FunctionResponse
+# scheduling=SILENT), the protocol-level fix that stops record_rsvp from triggering
+# a duplicate spoken turn. The code feature-detects and still runs on older versions.
+google-genai>=2.10,<3
 websockets
 python-dotenv
 python-multipart

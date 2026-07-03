@@ -18,6 +18,7 @@ from gemini_live import GeminiLive
 from plivo_handler import PlivoMediaBridge
 
 import dialer
+import directory
 import pricing
 import scheduler
 import store
@@ -57,6 +58,12 @@ def handle_record_rsvp(**kwargs):
         status = "yes" if kwargs.get("attending") else "no"
     return {
         "success": True,
+        # Belt-and-suspenders against the double reply on SDKs without SILENT scheduling:
+        # tell the model this is invisible bookkeeping so it doesn't re-speak.
+        "silent": True,
+        "instruction": ("RSVP logged silently. Do not speak, repeat, or re-confirm. "
+                        "If you already spoke your reply this turn, stay silent and "
+                        "wait for the member."),
         "outcome_status": status,
         "attending": status == "yes",
         "callback_time_text": kwargs.get("callback_time_text", "") or "",
@@ -72,7 +79,7 @@ def handle_record_rsvp(**kwargs):
 def handle_end_call(**kwargs):
     """No-op tool result; the actual hangup is driven by the 'end_call' event
     emitted from gemini_live once this tool fires."""
-    return {"success": True}
+    return {"success": True, "instruction": "Call ending; do not speak further."}
 
 
 # Live transcript watchers (browser WebSockets watching phone calls)
@@ -85,15 +92,29 @@ live_watchers: set = set()
 _pending_call_meta: dict = {}
 
 
-def _remember_call_meta(call_uuid, caller, gen, origin):
+def _remember_call_meta(call_uuid, caller, gen, origin, name=""):
     if not call_uuid:
         return
     _pending_call_meta[call_uuid] = {
         "caller": caller or "", "gen": gen or "", "origin": origin or "",
+        "name": name or "",
     }
     if len(_pending_call_meta) > 200:                 # bound memory; drop oldest
         for k in list(_pending_call_meta)[:50]:
             _pending_call_meta.pop(k, None)
+
+
+def _resolve_identity(call_id, header_caller, header_name):
+    """Resolve (caller, first_name) for a live media stream.
+
+    Plivo may drop extraHeaders on bidirectional streams, so fall back to the
+    metadata stashed at /plivo/answer time (keyed by CallUUID == stream callId).
+    First name precedence: explicit per-call name > directory lookup by number.
+    """
+    meta = _pending_call_meta.get(call_id or "", {})
+    caller = header_caller or meta.get("caller") or ""
+    name = header_name or meta.get("name") or directory.first_name_for(caller)
+    return caller, name
 
 # Initialize FastAPI
 app = FastAPI()
@@ -309,13 +330,18 @@ async def plivo_answer(request: Request):
     caller = qp.get("caller") or qp.get("From") or qp.get("from") or ""
     gen = qp.get("gen", "")
     origin = qp.get("origin", "")
-    # Stash by Plivo CallUUID so the media-stream WS can recover caller/generation
+    # Optional per-call first name (from /call-me or the scheduler); overrides the
+    # directory lookup for personalising the greeting.
+    name = qp.get("name", "")
+    # Stash by Plivo CallUUID so the media-stream WS can recover caller/generation/name
     # even though extraHeaders don't propagate on bidirectional streams.
     call_uuid = qp.get("CallUUID") or qp.get("callUUID") or qp.get("RequestUUID") or ""
-    _remember_call_meta(call_uuid, caller, gen, origin)
+    _remember_call_meta(call_uuid, caller, gen, origin, name=name)
     hdr_pairs = []
     if caller:
         hdr_pairs.append(f"X-Caller={quote(caller)}")
+    if name:
+        hdr_pairs.append(f"X-Caller-Name={quote(name)}")
     if gen:
         hdr_pairs.append(f"X-Callback-Gen={quote(gen)}")
     if origin:
@@ -385,6 +411,7 @@ async def plivo_media_stream(websocket: WebSocket):
         gemini_client=gemini_client,
         text_trigger="[The guest has just answered the call. Greet them now with your invitation.]",
         on_event=broadcast_event,
+        resolve_identity=_resolve_identity,
     )
 
     try:
@@ -401,12 +428,17 @@ async def plivo_media_stream(websocket: WebSocket):
 
 @app.post("/call-me")
 async def call_me(request: Request):
-    """Make Plivo call a phone number and connect to the AI agent."""
+    """Make Plivo call a phone number and connect to the AI agent.
+
+    Optional "name" personalises the greeting for this call (overrides the
+    member directory). If omitted, the directory is used as a fallback.
+    """
     body = await request.json()
     to_number = body.get("phone")
+    name = (body.get("name") or "").strip()
     if not to_number:
         return {"error": "Missing 'phone' field. Send {\"phone\": \"+91XXXXXXXXXX\"}"}
-    return await dialer.place_call(to_number, request=request)
+    return await dialer.place_call(to_number, request=request, name=name)
 
 
 # ============ LIVE TRANSCRIPT DASHBOARD ============

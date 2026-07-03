@@ -111,7 +111,8 @@ ULAW_FRAME_S = 0.020
 class PlivoMediaBridge:
     """Bridges a Plivo bidirectional Audio Stream WebSocket with a Gemini Live session."""
 
-    def __init__(self, websocket, gemini_client, text_trigger, on_event=None):
+    def __init__(self, websocket, gemini_client, text_trigger, on_event=None,
+                 resolve_identity=None):
         self.ws = websocket
         self.gemini = gemini_client
         self.stream_id = None
@@ -120,6 +121,9 @@ class PlivoMediaBridge:
         self.generation = 0
         self.text_trigger = text_trigger
         self.on_event = on_event  # async callback for live transcript
+        # (call_id, header_caller, header_name) -> (caller, first_name). Lets the
+        # bridge personalise the greeting even when Plivo drops extraHeaders.
+        self.resolve_identity = resolve_identity
 
         # Queues for Gemini
         self.audio_input_queue = asyncio.Queue()
@@ -230,20 +234,39 @@ class PlivoMediaBridge:
                                          or data.get("streamId") or "")
                     self.call_id = str(start.get("callId") or start.get("call_id") or "")
                     self.caller = self._extract_header(data, start, "x-caller")
+                    header_name = self._extract_header(data, start, "x-caller-name")
                     gen_raw = self._extract_header(data, start, "x-callback-gen")
                     try:
                         self.generation = int(gen_raw) if gen_raw else 0
                     except ValueError:
                         self.generation = 0
+                    # Resolve caller + first name BEFORE emitting call_start (which may
+                    # pop the pending-call metadata the resolver relies on).
+                    first_name = ""
+                    if self.resolve_identity:
+                        try:
+                            caller, first_name = self.resolve_identity(
+                                self.call_id, self.caller, header_name)
+                            self.caller = caller or self.caller
+                        except Exception as e:
+                            logger.warning(f"resolve_identity failed: {e}")
                     logger.info(f"Plivo stream started: stream_id={self.stream_id}, "
-                                f"call={self.call_id}, caller={self.caller}, gen={self.generation}")
+                                f"call={self.call_id}, caller={self.caller}, "
+                                f"named={'yes' if first_name else 'no'}, gen={self.generation}")
                     if not self._started:
                         self._started = True
                         await self._emit({"type": "call_start", "call_sid": self.call_id or "",
                                           "caller": self.caller or "",
                                           "generation": self.generation})
-                    # Trigger the AI to start talking
-                    await self.text_input_queue.put(self.text_trigger)
+                    # Trigger the AI to start talking — personalised by first name when known.
+                    if first_name:
+                        trigger = (f"[The guest has just answered. Their first name is {first_name}. "
+                                   f'Greet them by first name (e.g. "Hello {first_name}!") and give '
+                                   f"your invitation now. Use their first name naturally once or twice "
+                                   f"more — never overuse it.]")
+                    else:
+                        trigger = self.text_trigger
+                    await self.text_input_queue.put(trigger)
 
                 elif event == "media":
                     media = data.get("media") or {}

@@ -58,12 +58,14 @@ def handle_record_rsvp(**kwargs):
         status = "yes" if kwargs.get("attending") else "no"
     return {
         "success": True,
-        # Belt-and-suspenders against the double reply on SDKs without SILENT scheduling:
-        # tell the model this is invisible bookkeeping so it doesn't re-speak.
+        # Guard the double reply WITHOUT suppressing the acceptance: a conditional
+        # nudge — speak the reply if it hasn't been said yet, else stay quiet. This
+        # works whether the model records before or after speaking, on any SDK.
         "silent": True,
-        "instruction": ("RSVP logged silently. Do not speak, repeat, or re-confirm. "
-                        "If you already spoke your reply this turn, stay silent and "
-                        "wait for the member."),
+        "instruction": ("RSVP saved silently (invisible bookkeeping). If you have NOT yet "
+                        "spoken your short reply to the member for this answer, say it now — "
+                        "briefly, once. If you already spoke it, stay silent and wait. "
+                        "Never repeat a reply you've already given."),
         "outcome_status": status,
         "attending": status == "yes",
         "callback_time_text": kwargs.get("callback_time_text", "") or "",

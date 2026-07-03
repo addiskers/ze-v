@@ -52,6 +52,22 @@ def _looks_like_goodbye(text: str) -> bool:
         return False
     return bool(_GOODBYE_RE.search(t))
 
+
+# Within-turn repeat guard: if the agent voices a closing phrase a SECOND time inside one
+# turn (the fusion loop), we stop feeding the duplicate audio. These are agent-side closing
+# markers; two of the same in one turn = a repeat.
+_CLOSING_MARKERS = (
+    "see you on the", "so glad you", "we'll miss you", "we will miss you",
+    "drop all the details", "details on the whatsapp", "on the whatsapp group",
+    "anything else i can help", "look forward to seeing you",
+)
+
+
+def _has_closing_repeat(turn_text: str) -> bool:
+    t = re.sub(r"[^a-z ]", " ", (turn_text or "").lower())
+    t = re.sub(r"\s+", " ", t)
+    return any(t.count(m) >= 2 for m in _CLOSING_MARKERS)
+
 # ===== Mulaw codec tables (ITU-T G.711) =====
 
 # Mulaw -> Linear PCM16 decode table (256 entries)
@@ -163,6 +179,8 @@ class PlivoMediaBridge:
         # Auto-hangup signals (so the call ends even if the agent never calls end_call):
         self._rsvp_recorded = False              # set True once record_rsvp fires
         self._last_activity = time.monotonic()   # last time either party spoke / a turn ended
+        self._turn_text = ""                     # accumulated agent transcript for the current turn
+        self._suppress_turn = False              # drop the rest of this turn's audio (repeat detected)
 
     # ---- outbound (Gemini -> Plivo) ----
 
@@ -170,6 +188,8 @@ class PlivoMediaBridge:
         """Gemini produced audio (24k PCM16). Convert to mulaw 8k and chunk into 20ms frames."""
         if not self.stream_id:
             return
+        if self._suppress_turn:
+            return                               # a repeated closing was detected — drop the duplicate audio
         try:
             self._residual.extend(pcm24k_to_mulaw(data))
             while len(self._residual) >= ULAW_FRAME_BYTES:
@@ -436,6 +456,16 @@ class PlivoMediaBridge:
                         self._rsvp_recorded = True
                     if etype in ("user", "interrupted", "turn_complete"):
                         self._last_activity = time.monotonic()
+                    # Within-turn repeat guard: accumulate the agent's transcript; if a closing
+                    # phrase repeats inside ONE turn (the fusion loop), drop the duplicate audio.
+                    if etype == "gemini":
+                        self._turn_text += " " + (event.get("text") or "")
+                        if not self._suppress_turn and _has_closing_repeat(self._turn_text):
+                            self._suppress_turn = True
+                            logger.info("Repeated closing mid-turn; suppressing duplicate audio")
+                    elif etype in ("turn_complete", "interrupted"):
+                        self._turn_text = ""
+                        self._suppress_turn = False
                     if etype == "end_call":
                         logger.info("Agent requested end_call; will hang up after grace window")
                         self._schedule_end()

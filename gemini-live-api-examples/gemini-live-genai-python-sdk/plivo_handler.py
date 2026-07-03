@@ -299,9 +299,9 @@ class PlivoMediaBridge:
         then give Plivo's own playout a gentle beat to finish before hanging up."""
         import dialer
         try:
-            grace = float(os.getenv("CALL_HANGUP_GRACE_SECONDS", "2.5"))
+            grace = float(os.getenv("CALL_HANGUP_GRACE_SECONDS", "1.0"))
         except ValueError:
-            grace = 2.5
+            grace = 1.0
         stable = 0
         for _ in range(600):                       # up to ~12s
             if self._out_frames.empty() and not self._residual:
@@ -341,9 +341,9 @@ class PlivoMediaBridge:
         they speak, _gemini_loop cancels this task and the call continues; if they
         stay silent, drain the goodbye audio and hang up."""
         try:
-            grace = float(os.getenv("CALL_END_GRACE_SECONDS", "4"))
+            grace = float(os.getenv("CALL_END_GRACE_SECONDS", "2"))
         except ValueError:
-            grace = 4.0
+            grace = 2.0
         try:
             await asyncio.sleep(grace)
         except asyncio.CancelledError:

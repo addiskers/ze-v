@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from gemini_live import GeminiLive
+from gemini_live import GeminiLive, _SILENT_SCHEDULING
 from plivo_handler import PlivoMediaBridge
 
 import dialer
@@ -62,18 +62,9 @@ def handle_record_rsvp(**kwargs):
     if status not in ("yes", "no", "callback", "do_not_contact"):
         # Back-compat: derive from the legacy `attending` boolean.
         status = "yes" if kwargs.get("attending") else "no"
-    return {
+    result = {
         "success": True,
-        # Double reply: the real cure is google-genai>=2.10 (NON_BLOCKING/SILENT, feature-
-        # detected in gemini_live.py). On the older SDK (1.14.0) the model may record BEFORE
-        # speaking, so this instruction MUST stay CONDITIONAL (speak only if it hasn't yet) or
-        # it goes mute — while strongly forbidding a SECOND closing to curb the double reply.
         "silent": True,
-        "instruction": ("Recorded — silent office bookkeeping, invisible to the member. "
-                        "Only if you have said NOTHING to the member about this answer yet, "
-                        "give your one brief reply now. If you have already replied at all, "
-                        "stay completely silent — do not add to it, rephrase it, or repeat it, "
-                        "and never give a second closing."),
         "outcome_status": status,
         "attending": status == "yes",
         "callback_time_text": kwargs.get("callback_time_text", "") or "",
@@ -84,6 +75,18 @@ def handle_record_rsvp(**kwargs):
         "note": kwargs.get("note", "") or "",
         "event": EVENT,
     }
+    # On the modern SDK (google-genai>=2.10) record_rsvp's response is SILENT-scheduled, so it
+    # adds NO fresh generation — the verbose "give your reply now" text is then dead weight that
+    # only nudges an extra spoken closing, so we drop it. On the OLD SDK (no SILENT) the model may
+    # record BEFORE speaking, so keep the CONDITIONAL instruction (speak only if it hasn't yet) or
+    # it goes mute — while forbidding a second closing.
+    if _SILENT_SCHEDULING is None:
+        result["instruction"] = ("Recorded — silent office bookkeeping, invisible to the member. "
+                                 "Only if you have said NOTHING to the member about this answer yet, "
+                                 "give your one brief reply now. If you have already replied at all, "
+                                 "stay completely silent — do not add to it, rephrase it, or repeat it, "
+                                 "and never give a second closing.")
+    return result
 
 
 def handle_end_call(**kwargs):

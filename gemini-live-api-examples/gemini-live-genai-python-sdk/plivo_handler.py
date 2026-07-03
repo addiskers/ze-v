@@ -22,11 +22,35 @@ import base64
 import json
 import logging
 import os
+import re
 import struct
 import time
 from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
+
+# Mutual-goodbye detection: after the agent's goodbye + end_call, a caller who just
+# says "bye / thanks / okay" is WRAPPING UP — we should let the hangup proceed, not
+# cancel it and re-engage (which restarts the whole grace cycle and drags the call
+# out to 10-16s). A real follow-up (a question / new info) still cancels the hangup.
+_QUESTION_RE = re.compile(
+    r"[?]|\b(what|whats|when|where|who|whom|which|how|why|can i|could|would you|"
+    r"is it|are|do you|does|will|actually|wait|hold on|one (thing|sec|second|"
+    r"question|more)|but|sorry|hello|hi)\b", re.I)
+_GOODBYE_RE = re.compile(
+    r"\b(bye+|goodbye|good ?bye|tata|ta ta|thanks|thank you|thankyou|cheers|"
+    r"that'?s all|that is all|nothing else|nothing|i'?m done|we'?re done|see you|"
+    r"good ?night|great|perfect|okay bye|ok bye|done)\b", re.I)
+
+
+def _looks_like_goodbye(text: str) -> bool:
+    """True only for a short caller sign-off with no real follow-up/question."""
+    t = (text or "").strip().lower()
+    if not t or _QUESTION_RE.search(t):
+        return False
+    if len(re.findall(r"[a-z']+", t)) > 7:          # too long to be a simple sign-off
+        return False
+    return bool(_GOODBYE_RE.search(t))
 
 # ===== Mulaw codec tables (ITU-T G.711) =====
 
@@ -374,12 +398,17 @@ class PlivoMediaBridge:
                         logger.info("Agent requested end_call; will hang up after grace window")
                         self._schedule_end()
                         continue           # stay live during the grace window
-                    # Caller came back before the hangup fired -> cancel it, keep talking.
-                    if etype in ("user", "interrupted") and self._pending_hangup_task \
-                            and not self._pending_hangup_task.done():
-                        self._pending_hangup_task.cancel()
-                        self._pending_hangup_task = None
-                        logger.info("Caller resumed after goodbye; cancelling hangup")
+                    # After the agent's goodbye + end_call, decide what a caller utterance means:
+                    #  - a simple "bye/thanks/okay"  -> let the hangup proceed (don't re-engage)
+                    #  - a real question / new info  -> cancel the hangup and keep talking
+                    #  - a bare interrupt (no text)  -> wait for the text before deciding
+                    if self._pending_hangup_task and not self._pending_hangup_task.done():
+                        if etype == "user" and _looks_like_goodbye(event.get("text")):
+                            logger.info("Caller said goodbye; letting the hangup proceed")
+                        elif etype == "user":
+                            self._pending_hangup_task.cancel()
+                            self._pending_hangup_task = None
+                            logger.info("Caller resumed with a follow-up; cancelling hangup")
         except asyncio.CancelledError:
             raise                          # caller hung up: let the generator finally close the session
         except Exception as e:

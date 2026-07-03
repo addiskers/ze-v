@@ -58,14 +58,16 @@ def handle_record_rsvp(**kwargs):
         status = "yes" if kwargs.get("attending") else "no"
     return {
         "success": True,
-        # Guard the double reply WITHOUT suppressing the acceptance: a conditional
-        # nudge — speak the reply if it hasn't been said yet, else stay quiet. This
-        # works whether the model records before or after speaking, on any SDK.
+        # Double reply: the real cure is google-genai>=2.10 (NON_BLOCKING/SILENT, feature-
+        # detected in gemini_live.py). On the older SDK (1.14.0) the model may record BEFORE
+        # speaking, so this instruction MUST stay CONDITIONAL (speak only if it hasn't yet) or
+        # it goes mute — while strongly forbidding a SECOND closing to curb the double reply.
         "silent": True,
-        "instruction": ("RSVP saved silently (invisible bookkeeping). If you have NOT yet "
-                        "spoken your short reply to the member for this answer, say it now — "
-                        "briefly, once. If you already spoke it, stay silent and wait. "
-                        "Never repeat a reply you've already given."),
+        "instruction": ("Recorded — silent office bookkeeping, invisible to the member. "
+                        "Only if you have said NOTHING to the member about this answer yet, "
+                        "give your one brief reply now. If you have already replied at all, "
+                        "stay completely silent — do not add to it, rephrase it, or repeat it, "
+                        "and never give a second closing."),
         "outcome_status": status,
         "attending": status == "yes",
         "callback_time_text": kwargs.get("callback_time_text", "") or "",

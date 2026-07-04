@@ -406,6 +406,10 @@ def cc_open_count(campaign_id: int) -> int:
     return int(r["c"]) if r else 0
 
 
+def get_campaign_contact(cc_id) -> dict | None:
+    return _one("SELECT * FROM campaign_contacts WHERE id = ?", (int(cc_id),))
+
+
 def cc_update(cc_id: int, **fields) -> None:
     if not fields:
         return

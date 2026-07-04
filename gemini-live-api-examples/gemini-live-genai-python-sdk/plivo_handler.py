@@ -393,7 +393,7 @@ class PlivoMediaBridge:
                 return float(os.getenv(name, str(default)))
             except (TypeError, ValueError):
                 return default
-        post_rsvp = _cfg("EO_POST_RSVP_IDLE_SECONDS", 5.0)
+        post_rsvp = _cfg("EO_POST_RSVP_IDLE_SECONDS", 8.0)
         dead_air = _cfg("EO_IDLE_HANGUP_SECONDS", 25.0)
         try:
             while True:
@@ -454,7 +454,9 @@ class PlivoMediaBridge:
                     # Feed the idle-hangup guard: mark the task done + stamp any activity.
                     if etype == "tool_call" and event.get("name") == "record_rsvp":
                         self._rsvp_recorded = True
-                    if etype in ("user", "interrupted", "turn_complete"):
+                    # Stamp activity on caller speech AND agent speech ("gemini"), so the idle
+                    # timer only counts TRUE mutual silence — never while either side is talking.
+                    if etype in ("user", "interrupted", "turn_complete", "gemini"):
                         self._last_activity = time.monotonic()
                     # Within-turn repeat guard: accumulate the agent's transcript; if a closing
                     # phrase repeats inside ONE turn (the fusion loop), drop the duplicate audio.

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { fmtDate } from './CallLogs.jsx'
+import Modal from './Modal.jsx'
+
+const pad = (n) => String(n).padStart(2, '0')
+const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` }
+const nowTimeStr = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}` }
 
 // Scheduler / callbacks panel — reused on Dashboard and the Scheduler page.
 export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
@@ -8,6 +13,9 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
   const [enabled, setEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
+  const [resch, setResch] = useState(null)   // { id, date, time }
+  const [reschErr, setReschErr] = useState('')
+  const [busy, setBusy] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -29,6 +37,17 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
   async function act(id, path) {
     try { await api.post(`/callbacks/${encodeURIComponent(id)}/${path}`); load() }
     catch (e) { setErr(e.message) }
+  }
+
+  async function doReschedule() {
+    setBusy(true); setReschErr('')
+    try {
+      if (!resch.date || !resch.time) throw new Error('Pick a date and time')
+      const dt = new Date(`${resch.date}T${resch.time}`)
+      if (dt.getTime() < Date.now() - 60000) throw new Error('Pick a time in the future')
+      await api.post(`/callbacks/${encodeURIComponent(resch.id)}/reschedule`, { due_at: dt.toISOString() })
+      setResch(null); load()
+    } catch (e) { setReschErr(e.message) } finally { setBusy(false) }
   }
 
   return (
@@ -60,6 +79,7 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
             ) : items.map((c) => {
               const cb = c.callback || c
               const id = c.id || c.call_sid
+              const done = ['completed', 'cancelled', 'in_flight'].includes(cb.status)
               return (
                 <tr key={id}>
                   <td>{c.caller || c.phone || '—'}</td>
@@ -67,8 +87,9 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
                   <td className="num">{cb.attempts ?? 0}</td>
                   <td><span className={`pill ${(cb.status || 'pending')}`}>{cb.status || 'pending'}</span></td>
                   <td style={{ display: 'flex', gap: 6 }}>
-                    <button className="btn sm" onClick={() => act(id, 'call-now')}>Call now</button>
-                    <button className="btn ghost sm" onClick={() => act(id, 'cancel')}>Cancel</button>
+                    <button className="btn sm" disabled={done} onClick={() => act(id, 'call-now')}>Call now</button>
+                    <button className="btn ghost sm" disabled={done} onClick={() => { setReschErr(''); setResch({ id, date: todayStr(), time: nowTimeStr() }) }}>Reschedule</button>
+                    <button className="btn ghost sm" disabled={cb.status === 'cancelled'} onClick={() => act(id, 'cancel')}>Cancel</button>
                   </td>
                 </tr>
               )
@@ -76,6 +97,25 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
           </tbody>
         </table>
       </div>
+
+      {resch && (
+        <Modal
+          title="Reschedule callback"
+          sub="Pick a new date and time to call back"
+          width={400}
+          onClose={() => !busy && setResch(null)}
+          footer={<>
+            <button className="btn ghost" disabled={busy} onClick={() => setResch(null)}>Cancel</button>
+            <button className="btn" disabled={busy} onClick={doReschedule}>{busy ? 'Saving…' : 'Reschedule'}</button>
+          </>}
+        >
+          {reschErr && <div className="err" style={{ marginBottom: 12 }}>{reschErr}</div>}
+          <div className="two">
+            <div><label>Date</label><input type="date" min={todayStr()} value={resch.date} onChange={(e) => setResch({ ...resch, date: e.target.value })} /></div>
+            <div><label>Time</label><input type="time" value={resch.time} onChange={(e) => setResch({ ...resch, time: e.target.value })} /></div>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

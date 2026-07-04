@@ -1,15 +1,16 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth.jsx'
 import {
-  IconDashboard, IconPlus, IconCampaigns, IconUsers, IconSettings, IconUser, IconLogout,
+  IconDashboard, IconPlus, IconCampaigns, IconClock, IconUsers, IconSettings, IconUser, IconLogout,
 } from './icons.jsx'
 
-// Superadmin nav — Call Logs / Scheduler live on the Dashboard, Contacts live in
-// Create Campaign, so they aren't separate items.
+// Superadmin nav — Call Logs lives on the Dashboard, Contacts live in Create Campaign.
+// Scheduler is its own item so callbacks are findable + manageable.
 const FULL_NAV = [
   { to: '/', label: 'Dashboard', icon: IconDashboard, end: true },
   { to: '/create-campaign', label: 'Create Campaign', icon: IconPlus },
   { to: '/campaigns', label: 'My Campaigns', icon: IconCampaigns },
+  { to: '/scheduler', label: 'Scheduler', icon: IconClock },
   { to: '/users', label: 'Users', icon: IconUsers, adminOnly: true },
   { to: '/settings', label: 'Settings', icon: IconSettings, adminOnly: true },
 ]
@@ -18,6 +19,7 @@ const AGENT_NAV = [
   { to: '/', label: 'Dashboard', icon: IconDashboard, end: true },
   { to: '/create-campaign', label: 'Create Campaign', icon: IconPlus },
   { to: '/campaigns', label: 'My Campaigns', icon: IconCampaigns },
+  { to: '/scheduler', label: 'Scheduler', icon: IconClock },
   { to: '/profile', label: 'My Profile', icon: IconUser },
 ]
 

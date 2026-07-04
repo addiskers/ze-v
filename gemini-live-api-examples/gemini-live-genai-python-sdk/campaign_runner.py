@@ -127,6 +127,30 @@ async def _dial_one(cc, campaign, now):
         _apply_failure(cc, campaign, now, error=res.get("error"))
 
 
+async def dial_contact_now(campaign_id, cc_id):
+    """Admin 'Call now': dial ONE campaign contact immediately, even if the campaign is
+    scheduled for later. Promotes a scheduled campaign to live so the runner then tracks
+    the call (reap / retries). Returns {'ok': True} or {'error': '...'}."""
+    campaign = eo_db.get_campaign(campaign_id)
+    cc = eo_db.get_campaign_contact(cc_id)
+    if not campaign or not cc or int(cc.get("campaign_id") or 0) != int(campaign_id):
+        return {"error": "not found"}
+    if campaign.get("status") in ("completed", "cancelled"):
+        return {"error": f"campaign is {campaign['status']}"}
+    if cc.get("call_status") == "calling":
+        return {"error": "already calling"}
+    if not _plivo_ready():
+        return {"error": "Plivo is not configured on the server (PLIVO_* / PUBLIC_URL)"}
+    # promote a scheduled campaign so the runner reaps + tracks this call from here on
+    if campaign.get("status") == "scheduled":
+        eo_db.set_campaign_status(campaign_id, "live")
+        campaign = {**campaign, "status": "live"}
+        logger.info(f"Campaign {campaign_id} promoted to live via Call-now")
+    await _dial_one(cc, campaign, _now())
+    logger.info(f"Call-now dialed contact {cc_id} ({cc.get('phone')}) in campaign {campaign_id}")
+    return {"ok": True}
+
+
 async def _process_campaign(campaign, now):
     await _reap_calling(campaign, now)
     if eo_db.cc_open_count(campaign["id"]) == 0:
@@ -136,8 +160,8 @@ async def _process_campaign(campaign, now):
     if not _plivo_ready():
         return                       # nothing to dial with (dev/local) — leave pending
     calling = len(eo_db.cc_by_status(campaign["id"], "calling"))
-    budget = min(_cfg_int("EO_CAMPAIGN_MAX_PER_TICK", 3),
-                 max(0, _cfg_int("EO_CAMPAIGN_MAX_CONCURRENT", 5) - calling))
+    budget = min(_cfg_int("EO_CAMPAIGN_MAX_PER_TICK", 1),
+                 max(0, _cfg_int("EO_CAMPAIGN_MAX_CONCURRENT", 2) - calling))
     if budget <= 0:
         return
     for cc in eo_db.cc_pending_due(campaign["id"], _iso(now), budget):
@@ -164,7 +188,9 @@ async def run_loop():
         logger.info("Campaign runner disabled (EO_CAMPAIGN_RUNNER_ENABLED)")
         return
     interval = _cfg_int("EO_CAMPAIGN_POLL_INTERVAL", 30)
-    logger.info(f"Campaign runner started (interval={interval}s, plivo_ready={_plivo_ready()})")
+    logger.info(f"Campaign runner started (interval={interval}s, plivo_ready={_plivo_ready()}, "
+                f"max_concurrent={_cfg_int('EO_CAMPAIGN_MAX_CONCURRENT', 2)}, "
+                f"per_tick={_cfg_int('EO_CAMPAIGN_MAX_PER_TICK', 1)})")
     while True:
         try:
             await _tick()

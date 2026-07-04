@@ -370,11 +370,14 @@ async def campaign_contacts(campaign_id: int, request: Request):
 
 @router.post("/campaigns/{campaign_id}/contacts/{cc_id}/retry")
 async def campaign_contact_retry(campaign_id: int, cc_id: int, request: Request):
-    """Re-queue one recipient for an immediate dial (clears the backoff)."""
+    """'Call now' — dial this recipient immediately (promotes a scheduled campaign to live)."""
+    import campaign_runner
     user = eo_auth.require_eo(request)
     if not _owns_or_admin(user, eo_db.get_campaign(campaign_id)):
         raise HTTPException(status_code=404, detail="Campaign not found")
-    eo_db.cc_update(int(cc_id), call_status="pending", next_attempt_at=None, last_error=None)
+    res = await campaign_runner.dial_contact_now(campaign_id, cc_id)
+    if res.get("error"):
+        raise HTTPException(status_code=400, detail=res["error"])
     return {"ok": True}
 
 
@@ -459,12 +462,23 @@ async def eo_callbacks(request: Request):
                          "paused_until": state.get("paused_until")})
 
 
-@router.post("/callbacks/{call_id}/cancel")
-async def eo_callback_cancel(call_id: str, request: Request):
-    eo_auth.require_eo(request)
+async def _owned_callback(user, call_id):
+    """Load a call that has a callback block, enforcing per-agent ownership.
+    Superadmin: any. Agent: only if the call's campaign belongs to them."""
     call = await store.load_call(call_id)
     if not call or not call.get("callback"):
         raise HTTPException(status_code=404, detail="Callback not found")
+    if user["role"] != "eo_admin":
+        cid = call.get("campaign_id")
+        if not cid or not _owns_or_admin(user, eo_db.get_campaign(cid)):
+            raise HTTPException(status_code=404, detail="Callback not found")
+    return call
+
+
+@router.post("/callbacks/{call_id}/cancel")
+async def eo_callback_cancel(call_id: str, request: Request):
+    user = eo_auth.require_eo(request)
+    call = await _owned_callback(user, call_id)
     call["callback"]["status"] = "cancelled"
     await store.save_call(call)
     return {"ok": True}
@@ -472,16 +486,33 @@ async def eo_callback_cancel(call_id: str, request: Request):
 
 @router.post("/callbacks/{call_id}/call-now")
 async def eo_callback_call_now(call_id: str, request: Request):
-    eo_auth.require_eo(request)
-    from datetime import datetime, timezone
-    call = await store.load_call(call_id)
-    if not call or not call.get("callback"):
-        raise HTTPException(status_code=404, detail="Callback not found")
+    user = eo_auth.require_eo(request)
+    call = await _owned_callback(user, call_id)
     cb = call["callback"]
     if cb.get("status") in ("in_flight", "completed"):
         return {"ok": False, "error": f"callback is {cb.get('status')}"}
     cb.update({"status": "pending", "due_at": datetime.now(timezone.utc).isoformat(),
                "next_retry_at": None, "attempts": 0, "last_error": None})
+    await store.save_call(call)
+    return {"ok": True}
+
+
+@router.post("/callbacks/{call_id}/reschedule")
+async def eo_callback_reschedule(call_id: str, request: Request):
+    """Change a scheduled callback's due time to a chosen future moment."""
+    user = eo_auth.require_eo(request)
+    call = await _owned_callback(user, call_id)
+    body = await request.json()
+    due = _parse_iso(body.get("due_at"))
+    if not due:
+        raise HTTPException(status_code=400, detail="A valid date/time is required")
+    if due < datetime.now(timezone.utc) - timedelta(minutes=2):
+        raise HTTPException(status_code=400, detail="Pick a time in the future")
+    cb = call["callback"]
+    if cb.get("status") in ("in_flight", "completed"):
+        return {"ok": False, "error": f"callback is {cb.get('status')}"}
+    cb.update({"status": "pending", "due_at": due.astimezone(timezone.utc).isoformat(),
+               "next_retry_at": None, "last_error": None})
     await store.save_call(call)
     return {"ok": True}
 

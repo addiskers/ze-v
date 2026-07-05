@@ -178,7 +178,7 @@ export default function CallLogs({ campaignId, title = 'Call Logs', showCampaign
   }
 }
 
-function CallDrawer({ call, onClose }) {
+export function CallDrawer({ call, onClose }) {
   const { isAdmin } = useAuth()
   const msgs = call.messages || call.transcript || []
   const hasCost = isAdmin && (call.total_cost_usd != null || call.gemini_cost_usd != null)

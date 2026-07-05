@@ -131,6 +131,9 @@ def _matches(meta, filters):
     cids = filters.get("campaign_ids")
     if cids is not None and str(meta.get("campaign_id") or "") not in cids:
         return False
+    since = filters.get("since")
+    if since and (meta.get("started_at") or "") < since:
+        return False
     booking = filters.get("booking")
     if booking is not None:
         want = booking in (True, "1", "true", "yes")

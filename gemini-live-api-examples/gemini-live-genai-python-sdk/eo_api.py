@@ -57,14 +57,37 @@ def _strip_summary(s: dict, include_cost: bool = False) -> dict:
     return s
 
 
+def _campaign_label(call, meta_by_id):
+    """Campaign name for a call — but ONLY if the call started at/after that campaign was
+    created. Guards against a call record (which survived a DB reset) being mislabelled by a
+    NEW campaign that reused the old campaign's numeric id."""
+    cid = call.get("campaign_id")
+    if not cid:
+        return None
+    m = meta_by_id.get(int(cid))
+    if not m or (call.get("started_at") or "") < (m.get("created_at") or ""):
+        return None
+    return m["name"]
+
+
+def _campaign_since(filters: dict) -> dict:
+    """When filtering by ONE campaign, set `since` = its created_at so calls that predate it
+    (stale records with a reused campaign id after a DB reset) don't show in that campaign."""
+    cid = filters.get("campaign_id")
+    if cid:
+        camp = eo_db.get_campaign(cid)
+        if camp:
+            filters["since"] = camp.get("created_at")
+    return filters
+
+
 def _label_and_strip(items: list[dict], include_cost: bool = False) -> list[dict]:
     """Attach campaign_name; strip cost fields unless include_cost (eo_admin)."""
-    names = eo_db.campaign_names([c.get("campaign_id") for c in items if c.get("campaign_id")])
+    meta = eo_db.campaign_meta([c.get("campaign_id") for c in items if c.get("campaign_id")])
     out = []
     for c in items:
         c = dict(c) if include_cost else {k: v for k, v in c.items() if k not in _CALL_COST_KEYS}
-        cid = c.get("campaign_id")
-        c["campaign_name"] = names.get(int(cid)) if cid else None
+        c["campaign_name"] = _campaign_label(c, meta)
         c["has_recording"] = store.has_recording(c.get("call_sid"))
         out.append(c)
     return out
@@ -77,7 +100,7 @@ def _strip_full(call: dict, include_cost: bool = False) -> dict:
         c.setdefault("messages", c.get("transcript") or [])
         cid = c.get("campaign_id")
         if cid:
-            c["campaign_name"] = eo_db.campaign_names([cid]).get(int(cid))
+            c["campaign_name"] = _campaign_label(c, eo_db.campaign_meta([cid]))
         c["has_recording"] = store.has_recording(c.get("call_sid"))
         return c
     c = {k: v for k, v in call.items() if k not in _CALL_COST_KEYS}
@@ -89,7 +112,7 @@ def _strip_full(call: dict, include_cost: bool = False) -> dict:
     c.setdefault("messages", c.get("transcript") or [])
     cid = c.get("campaign_id")
     if cid:
-        c["campaign_name"] = eo_db.campaign_names([cid]).get(int(cid))
+        c["campaign_name"] = _campaign_label(c, eo_db.campaign_meta([cid]))
     c["has_recording"] = store.has_recording(c.get("call_sid"))
     return c
 
@@ -197,7 +220,7 @@ async def eo_summary(request: Request):
 async def eo_calls(request: Request):
     user = eo_auth.require_eo(request)
     include_cost = user["role"] == "eo_admin"
-    filters = _filters_from_request(request)
+    filters = _campaign_since(_filters_from_request(request))
     scope = _scope_ids(user)
     if scope is not None:
         filters["campaign_ids"] = scope
@@ -212,7 +235,7 @@ async def eo_calls(request: Request):
 async def eo_calls_csv(request: Request):
     user = eo_auth.require_eo(request)
     include_cost = user["role"] == "eo_admin"
-    filters = _filters_from_request(request)
+    filters = _campaign_since(_filters_from_request(request))
     scope = _scope_ids(user)
     if scope is not None:
         filters["campaign_ids"] = scope

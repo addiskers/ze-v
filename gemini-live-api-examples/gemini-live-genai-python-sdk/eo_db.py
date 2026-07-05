@@ -459,3 +459,15 @@ def campaign_names(ids) -> dict:
     placeholders = ",".join("?" * len(ids))
     rows = _rows(f"SELECT id, name FROM campaigns WHERE id IN ({placeholders})", tuple(ids))
     return {r["id"]: r["name"] for r in rows}
+
+
+def campaign_meta(ids) -> dict:
+    """id -> {name, created_at}. Used to label a call with its campaign ONLY when the
+    call happened at/after the campaign was created — so call records that survived a DB
+    reset don't get mislabelled by a new campaign that reused their old id."""
+    ids = [int(i) for i in ids if i]
+    if not ids:
+        return {}
+    placeholders = ",".join("?" * len(ids))
+    rows = _rows(f"SELECT id, name, created_at FROM campaigns WHERE id IN ({placeholders})", tuple(ids))
+    return {r["id"]: {"name": r["name"], "created_at": r["created_at"]} for r in rows}

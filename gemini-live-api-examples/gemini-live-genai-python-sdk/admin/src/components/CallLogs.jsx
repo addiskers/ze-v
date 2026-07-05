@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, qs, getToken, getBlob } from '../api.js'
+import { api, qs, getToken } from '../api.js'
 import { useAuth } from '../auth.jsx'
 import { IconSearch, IconDownload, IconPhone } from './icons.jsx'
 
@@ -182,18 +182,14 @@ function CallDrawer({ call, onClose }) {
   const { isAdmin } = useAuth()
   const msgs = call.messages || call.transcript || []
   const hasCost = isAdmin && (call.total_cost_usd != null || call.gemini_cost_usd != null)
-  const [audioUrl, setAudioUrl] = useState(null)
-  const [audioErr, setAudioErr] = useState('')
+  const [audioErr, setAudioErr] = useState(false)
   const callKey = call.id || call.call_sid
-  useEffect(() => {
-    if (!call.has_recording || !callKey) return undefined
-    let url = null, alive = true
-    setAudioErr('')
-    getBlob(`/calls/${encodeURIComponent(callKey)}/audio`)
-      .then((b) => { if (alive) { url = URL.createObjectURL(b); setAudioUrl(url) } })
-      .catch(() => { if (alive) setAudioErr('No recording available for this call') })
-    return () => { alive = false; if (url) URL.revokeObjectURL(url) }
-  }, [callKey, call.has_recording])
+  // Stream the recording natively (range requests → plays in ~300ms) instead of
+  // pre-downloading the whole WAV as a blob. Token in the query since <audio> can't
+  // send an Authorization header.
+  const audioSrc = call.has_recording && callKey
+    ? `/api/eo/calls/${encodeURIComponent(callKey)}/audio?token=${encodeURIComponent(getToken())}`
+    : null
   return (
     <div className="backdrop" onClick={onClose}>
       <div className="modal" style={{ maxWidth: 540, maxHeight: '85vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
@@ -234,9 +230,9 @@ function CallDrawer({ call, onClose }) {
         {call.has_recording && (
           <div className="card" style={{ marginBottom: 14, padding: 12 }}>
             <label>Recording</label>
-            {audioErr ? <div className="muted" style={{ fontSize: '0.8rem' }}>{audioErr}</div>
-              : audioUrl ? <audio controls src={audioUrl} style={{ width: '100%' }} />
-              : <div className="muted" style={{ fontSize: '0.8rem' }}>Loading audio…</div>}
+            {audioErr
+              ? <div className="muted" style={{ fontSize: '0.8rem' }}>No recording available for this call</div>
+              : <audio controls preload="none" src={audioSrc} style={{ width: '100%' }} onError={() => setAudioErr(true)} />}
           </div>
         )}
         <label>Transcript</label>

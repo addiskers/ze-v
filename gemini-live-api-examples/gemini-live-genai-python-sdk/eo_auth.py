@@ -99,7 +99,9 @@ def _token_from_request(request: Request) -> str:
     auth = request.headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
-    return request.cookies.get("eo_session", "")
+    # cookie or ?token= (the latter lets an <audio>/<a> element authenticate, since
+    # those can't send an Authorization header — used for streaming call recordings).
+    return request.cookies.get("eo_session", "") or request.query_params.get("token", "")
 
 
 def require_eo(request: Request) -> dict:

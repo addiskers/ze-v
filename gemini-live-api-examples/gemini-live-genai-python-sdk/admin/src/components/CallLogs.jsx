@@ -191,7 +191,7 @@ function CallDrawer({ call, onClose }) {
     setAudioErr('')
     getBlob(`/calls/${encodeURIComponent(callKey)}/audio`)
       .then((b) => { if (alive) { url = URL.createObjectURL(b); setAudioUrl(url) } })
-      .catch(() => { if (alive) setAudioErr('Recording unavailable') })
+      .catch(() => { if (alive) setAudioErr('No recording available for this call') })
     return () => { alive = false; if (url) URL.revokeObjectURL(url) }
   }, [callKey, call.has_recording])
   return (
@@ -208,6 +208,19 @@ function CallDrawer({ call, onClose }) {
           {call.campaign_name && <div><label>Campaign</label>{call.campaign_name}</div>}
           {call.language && <div><label>Language</label>{call.language}</div>}
         </div>
+        {call.callback && (
+          <div className="card" style={{ marginBottom: 14, padding: 12 }}>
+            <label>Callback</label>
+            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div><span className="muted" style={{ fontSize: '0.7rem' }}>Scheduled for</span><div>{fmtDate(call.callback.due_at)}</div></div>
+              <div><span className="muted" style={{ fontSize: '0.7rem' }}>Status</span><div><span className={`pill ${call.callback.status || 'pending'}`}>{call.callback.status || 'pending'}</span></div></div>
+              <div><span className="muted" style={{ fontSize: '0.7rem' }}>Attempts</span><div>{call.callback.attempts ?? 0}{call.callback.max_attempts ? ` / ${call.callback.max_attempts}` : ''}</div></div>
+              {call.callback.status === 'pending' && call.callback.next_retry_at &&
+                <div><span className="muted" style={{ fontSize: '0.7rem' }}>Next retry</span><div>{fmtDate(call.callback.next_retry_at)}</div></div>}
+            </div>
+            {call.callback.last_error && <div style={{ fontSize: '0.72rem', color: '#fca5a5', marginTop: 8 }}>{call.callback.last_error}</div>}
+          </div>
+        )}
         {hasCost && (
           <div className="card" style={{ marginBottom: 14, padding: 12 }}>
             <label>Cost (admin only)</label>

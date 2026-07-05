@@ -71,11 +71,21 @@ export async function downloadFile(path, filename) {
 }
 
 // Authenticated binary fetch → Blob (e.g. a call recording for an <audio> player).
-// Keeps the bearer token in the header, out of the URL.
-export async function getBlob(path) {
-  const res = await fetch(`/api/eo${path}`, { headers: { Authorization: `Bearer ${getToken()}` } })
-  if (!res.ok) throw new Error('Fetch failed')
-  return res.blob()
+// Keeps the bearer token in the header, out of the URL. Aborts after timeoutMs so
+// a stuck request can never leave the UI hanging on "Loading…".
+export async function getBlob(path, { timeoutMs = 15000 } = {}) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetch(`/api/eo${path}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+      signal: ctrl.signal,
+    })
+    if (!res.ok) throw new Error('Fetch failed')
+    return await res.blob()
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // Build a query string from a filters object (skips empty values).

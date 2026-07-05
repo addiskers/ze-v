@@ -28,6 +28,7 @@ from datetime import datetime, time as dtime, timedelta, timezone
 import callbacks
 import dialer
 import eo_db
+import live
 import scheduler
 import store
 
@@ -171,6 +172,11 @@ async def _process_campaign(campaign, now):
     calling = len(eo_db.cc_by_status(campaign["id"], "calling"))
     budget = min(_cfg_int("EO_CAMPAIGN_MAX_PER_TICK", 1),
                  max(0, _cfg_int("EO_CAMPAIGN_MAX_CONCURRENT", 2) - calling))
+    # Global simultaneous-call cap (campaign + callbacks share MAX_LIVE_CALLS).
+    # Reserve a slot for each due callback so callbacks get first claim; the campaign
+    # takes what's left. If nothing's free, dial nothing — contacts stay pending.
+    due_callbacks = len(await store.list_pending_callbacks(_iso(now)))
+    budget = min(budget, max(0, live.room() - due_callbacks))
     if budget <= 0:
         return
     for cc in eo_db.cc_pending_due(campaign["id"], _iso(now), budget):

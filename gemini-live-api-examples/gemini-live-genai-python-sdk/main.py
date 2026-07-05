@@ -29,6 +29,7 @@ import campaign_runner
 import eo_api
 import eo_auth
 import eo_db
+import live
 
 # Load environment variables
 load_dotenv()
@@ -466,12 +467,14 @@ async def plivo_media_stream(websocket: WebSocket):
         resolve_identity=_resolve_identity,
     )
 
+    live.inc()                     # count this connected call toward MAX_LIVE_CALLS
     try:
         await bridge.run()
     except Exception as e:
         import traceback
         logger.error(f"Plivo bridge error: {type(e).__name__}: {e}\n{traceback.format_exc()}")
     finally:
+        live.dec()
         try:
             await websocket.close()
         except:

@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 import callbacks
 import dialer
 import eo_db
+import live
 import store
 
 logger = logging.getLogger(__name__)
@@ -140,7 +141,9 @@ async def _tick():
     due = await store.list_pending_callbacks(_iso(now))
     dialed = 0
     for meta in due:
-        if dialed >= max_per_tick:
+        # Stop when out of per-tick budget OR at the global simultaneous-call cap.
+        # A cap-block just defers (leaves it pending/due) — no attempt is claimed.
+        if dialed >= max_per_tick or dialed >= live.room():
             break
         if await _is_paused(_now()):          # breaker may trip mid-loop
             break

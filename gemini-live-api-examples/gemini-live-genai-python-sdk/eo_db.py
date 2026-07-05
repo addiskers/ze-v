@@ -70,6 +70,9 @@ CREATE TABLE IF NOT EXISTS campaigns (
     callback_delay_hours INTEGER NOT NULL DEFAULT 4,
     callback_max_per_day INTEGER NOT NULL DEFAULT 3,
     callback_days        INTEGER NOT NULL DEFAULT 1,
+    -- calling hours (minutes-since-midnight IST): no auto dials outside [start, end)
+    call_start_min       INTEGER NOT NULL DEFAULT 540,      -- 09:00
+    call_end_min         INTEGER NOT NULL DEFAULT 1260,     -- 21:00
     -- progress counters (updated by the runner)
     done_count          INTEGER NOT NULL DEFAULT 0,
     failed_count        INTEGER NOT NULL DEFAULT 0,
@@ -111,6 +114,11 @@ def init() -> None:
         cc_cols = {r["name"] for r in conn.execute("PRAGMA table_info(campaign_contacts)").fetchall()}
         if "last_error" not in cc_cols:
             conn.execute("ALTER TABLE campaign_contacts ADD COLUMN last_error TEXT")
+        camp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(campaigns)").fetchall()}
+        if "call_start_min" not in camp_cols:
+            conn.execute("ALTER TABLE campaigns ADD COLUMN call_start_min INTEGER NOT NULL DEFAULT 540")
+        if "call_end_min" not in camp_cols:
+            conn.execute("ALTER TABLE campaigns ADD COLUMN call_end_min INTEGER NOT NULL DEFAULT 1260")
         conn.commit()
 
 
@@ -270,14 +278,17 @@ def active_campaign() -> dict | None:
 
 
 def create_campaign(name, start_at, created_by, callback_delay_hours,
-                    callback_max_per_day, callback_days, status="scheduled") -> int:
+                    callback_max_per_day, callback_days, status="scheduled",
+                    call_start_min=540, call_end_min=1260) -> int:
     now = _now()
     return _exec(
         "INSERT INTO campaigns (name, status, start_at, created_by, contact_count, "
-        "callback_delay_hours, callback_max_per_day, callback_days, created_at, updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "callback_delay_hours, callback_max_per_day, callback_days, call_start_min, call_end_min, "
+        "created_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (name, status, start_at, created_by, 0,
-         int(callback_delay_hours), int(callback_max_per_day), int(callback_days), now, now),
+         int(callback_delay_hours), int(callback_max_per_day), int(callback_days),
+         int(call_start_min), int(call_end_min), now, now),
     )
 
 
@@ -416,6 +427,24 @@ def cc_update(cc_id: int, **fields) -> None:
     fields["updated_at"] = _now()
     cols = ", ".join(f"{k} = ?" for k in fields)
     _exec(f"UPDATE campaign_contacts SET {cols} WHERE id = ?", tuple(fields.values()) + (int(cc_id),))
+
+
+def cc_set_outcome_by_phone(campaign_id: int, phone: str, outcome: str) -> int:
+    """Overwrite rsvp_outcome for the most-recent campaign_contacts row matching
+    (campaign_id, phone). Used to back-propagate a callback-RESULT outcome onto an already
+    'done' contact. Leaves call_status as-is. Returns rowcount (0 if no match)."""
+    conn = get_conn()
+    with _lock:
+        row = conn.execute(
+            "SELECT id FROM campaign_contacts WHERE campaign_id = ? AND phone = ? "
+            "ORDER BY id DESC LIMIT 1", (int(campaign_id), phone)).fetchone()
+        if not row:
+            return 0
+        cur = conn.execute(
+            "UPDATE campaign_contacts SET rsvp_outcome = ?, updated_at = ? WHERE id = ?",
+            (outcome, _now(), int(row["id"])))
+        conn.commit()
+        return cur.rowcount
 
 
 # ── campaigns: read helpers for call-log labelling ───────────────────────────

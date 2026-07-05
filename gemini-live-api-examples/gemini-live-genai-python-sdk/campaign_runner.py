@@ -25,6 +25,7 @@ import logging
 import os
 from datetime import datetime, time as dtime, timedelta, timezone
 
+import callbacks
 import dialer
 import eo_db
 import scheduler
@@ -129,23 +130,27 @@ async def _dial_one(cc, campaign, now):
 
 async def dial_contact_now(campaign_id, cc_id):
     """Admin 'Call now': dial ONE campaign contact immediately, even if the campaign is
-    scheduled for later. Promotes a scheduled campaign to live so the runner then tracks
-    the call (reap / retries). Returns {'ok': True} or {'error': '...'}."""
+    scheduled for later or already finished. Re-activates a non-live campaign to live so the
+    runner then tracks the call (reap / retries), guarded by the one-active-at-a-time rule.
+    Returns {'ok': True} or {'error': '...'}."""
     campaign = eo_db.get_campaign(campaign_id)
     cc = eo_db.get_campaign_contact(cc_id)
     if not campaign or not cc or int(cc.get("campaign_id") or 0) != int(campaign_id):
         return {"error": "not found"}
-    if campaign.get("status") in ("completed", "cancelled"):
-        return {"error": f"campaign is {campaign['status']}"}
     if cc.get("call_status") == "calling":
         return {"error": "already calling"}
     if not _plivo_ready():
         return {"error": "Plivo is not configured on the server (PLIVO_* / PUBLIC_URL)"}
-    # promote a scheduled campaign so the runner reaps + tracks this call from here on
-    if campaign.get("status") == "scheduled":
+    # Re-activate a non-live campaign (scheduled / completed / cancelled) so the runner reaps +
+    # tracks this call. Guard the one-active-at-a-time rule so we never end up with two live.
+    prev = campaign.get("status")
+    if prev != "live":
+        active = eo_db.active_campaign()
+        if active and int(active["id"]) != int(campaign_id):
+            return {"error": f"Another campaign '{active['name']}' is active — finish or cancel it first."}
         eo_db.set_campaign_status(campaign_id, "live")
         campaign = {**campaign, "status": "live"}
-        logger.info(f"Campaign {campaign_id} promoted to live via Call-now")
+        logger.info(f"Campaign {campaign_id} re-activated to live via Call-now (was {prev})")
     await _dial_one(cc, campaign, _now())
     logger.info(f"Call-now dialed contact {cc_id} ({cc.get('phone')}) in campaign {campaign_id}")
     return {"ok": True}
@@ -159,6 +164,10 @@ async def _process_campaign(campaign, now):
         return
     if not _plivo_ready():
         return                       # nothing to dial with (dev/local) — leave pending
+    # Calling-hours hard stop (per-campaign window, IST): reap + completion above still run,
+    # but place NO new dials outside the window — contacts stay pending until it opens.
+    if not callbacks.in_call_window(campaign.get("call_start_min"), campaign.get("call_end_min")):
+        return
     calling = len(eo_db.cc_by_status(campaign["id"], "calling"))
     budget = min(_cfg_int("EO_CAMPAIGN_MAX_PER_TICK", 1),
                  max(0, _cfg_int("EO_CAMPAIGN_MAX_CONCURRENT", 2) - calling))

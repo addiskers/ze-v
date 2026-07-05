@@ -70,6 +70,14 @@ export async function downloadFile(path, filename) {
   URL.revokeObjectURL(a.href)
 }
 
+// Authenticated binary fetch → Blob (e.g. a call recording for an <audio> player).
+// Keeps the bearer token in the header, out of the URL.
+export async function getBlob(path) {
+  const res = await fetch(`/api/eo${path}`, { headers: { Authorization: `Bearer ${getToken()}` } })
+  if (!res.ok) throw new Error('Fetch failed')
+  return res.blob()
+}
+
 // Build a query string from a filters object (skips empty values).
 export function qs(params) {
   const u = new URLSearchParams()

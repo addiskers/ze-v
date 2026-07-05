@@ -32,6 +32,8 @@ export default function CreateCampaign() {
   const [delayH, setDelayH] = useState(4)
   const [maxDay, setMaxDay] = useState(3)
   const [days, setDays] = useState(1)
+  const [callStart, setCallStart] = useState('09:00')
+  const [callEnd, setCallEnd] = useState('21:00')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -60,6 +62,7 @@ export default function CreateCampaign() {
       if (!Number.isInteger(dH) || dH < 0) throw new Error('Call-back hours must be a whole number (0 or more)')
       if (!Number.isInteger(mD) || mD < 1 || mD > 10) throw new Error('Attempts per day must be a whole number between 1 and 10')
       if (!Number.isInteger(dY) || dY < 1 || dY > 10) throw new Error('Call-back days must be a whole number between 1 and 10')
+      if (!callStart || !callEnd) throw new Error('Set the calling hours (start and end time)')
       const c = await api.post('/campaigns', {
         name: name.trim(),
         contact_ids: [...selected],
@@ -67,6 +70,8 @@ export default function CreateCampaign() {
         callback_delay_hours: dH,
         callback_max_per_day: mD,
         callback_days: dY,
+        call_start: callStart,
+        call_end: callEnd,
       })
       navigate(`/campaigns/${c.id}`)
     } catch (e) { setErr(e.message) } finally { setBusy(false) }
@@ -150,6 +155,15 @@ export default function CreateCampaign() {
             <div><label>For how many days (1–10)</label>
               <input type="number" min="1" max="10" step="1" inputMode="numeric" value={days}
                      onKeyDown={blockDecimalKeys} onChange={(e) => setDays(toWhole(e.target.value))} /></div>
+          </div>
+          <div className="two" style={{ marginTop: 14 }}>
+            <div><label>Call only after (IST)</label>
+              <input type="time" value={callStart} onChange={(e) => setCallStart(e.target.value)} /></div>
+            <div><label>…and before (IST)</label>
+              <input type="time" value={callEnd} onChange={(e) => setCallEnd(e.target.value)} /></div>
+          </div>
+          <div className="row" style={{ marginTop: 6, fontSize: '0.78rem', color: 'var(--muted)' }}>
+            No calls (campaign or callbacks) are placed outside these hours.
           </div>
         </Modal>
       )}

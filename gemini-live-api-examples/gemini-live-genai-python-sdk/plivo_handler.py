@@ -42,6 +42,13 @@ _GOODBYE_RE = re.compile(
     r"that'?s all|that is all|nothing else|nothing|i'?m done|we'?re done|see you|"
     r"good ?night|great|perfect|okay bye|ok bye|done)\b", re.I)
 
+# "Hold on / give me a minute" means STAY on THIS call — not a sign-off and not a callback.
+# When the caller says one of these we keep the line open for a grace window (see _hold_until).
+_HOLD_RE = re.compile(
+    r"\b(hold on|hold please|please hold|hang on|bear with me|one moment|just a "
+    r"(sec|second|minute|moment)|give me (a|one|two|a couple|a few)|one (sec|second|minute|moment)|"
+    r"two (secs|seconds|minutes)|a (minute|moment|sec|second)|wait)\b", re.I)
+
 
 def _looks_like_goodbye(text: str) -> bool:
     """True only for a short caller sign-off with no real follow-up/question."""
@@ -134,6 +141,21 @@ def mulaw_to_pcm16k(mulaw_bytes: bytes) -> bytes:
     return struct.pack(f"<{len(samples_16k)}h", *samples_16k)
 
 
+def _mulaw_frame_meansquare(mulaw_bytes: bytes) -> float:
+    """Cheap energy of one inbound mulaw frame (mean of squared PCM16 samples).
+    Pure-Python (reuses the mulaw decode table), no sqrt, no numpy/audioop — used as a
+    real-time voice-activity gate so silence/comfort-noise frames don't count as speech."""
+    n = len(mulaw_bytes)
+    if not n:
+        return 0.0
+    dec = _MULAW_DECODE
+    total = 0
+    for b in mulaw_bytes:
+        s = dec[b]
+        total += s * s
+    return total / n
+
+
 def pcm24k_to_mulaw(pcm_bytes: bytes) -> bytes:
     """Convert PCM 16-bit 24kHz (Gemini output) -> mulaw 8kHz (Plivo)."""
     n_samples = len(pcm_bytes) // 2
@@ -181,6 +203,70 @@ class PlivoMediaBridge:
         self._last_activity = time.monotonic()   # last time either party spoke / a turn ended
         self._turn_text = ""                     # accumulated agent transcript for the current turn
         self._suppress_turn = False              # drop the rest of this turn's audio (repeat detected)
+        # Real-time caller voice-activity (leads the laggy transcription "user" events) so we never
+        # cut the caller off mid-sentence. Starts at 0.0 (epoch) so it reads "stale" until real speech.
+        self._last_caller_audio = 0.0            # monotonic ts of the last VOICED inbound frame
+        self._hold_until = 0.0                   # don't idle-hangup while now < this (caller asked to hold)
+        try:
+            self._vad_ms_threshold = float(os.getenv("EO_VAD_RMS_THRESHOLD", "500")) ** 2
+        except ValueError:
+            self._vad_ms_threshold = 500.0 ** 2
+        # Call recording: mix inbound (caller) + outbound (agent) mulaw into one mono 8k PCM16
+        # timeline, written to a WAV at call end. Behind a flag; tees are guarded so a recording
+        # failure can never affect the live call.
+        self._rec_on = os.getenv("EO_RECORD_CALLS", "true").strip().lower() not in ("0", "false", "no", "off")
+        self._rec_t0 = None
+        self._rec = array.array("h")             # mono 8kHz PCM16 mix (sample-indexed timeline)
+        try:
+            self._rec_max_samples = int(float(os.getenv("EO_RECORD_MAX_SECONDS", "420")) * 8000)
+        except ValueError:
+            self._rec_max_samples = 420 * 8000
+
+    def _rec_add(self, mulaw_bytes):
+        """Mix one ~20ms mulaw frame (either direction) into the recording timeline at its
+        real-time offset. Guarded — never raises into the live audio path."""
+        if not self._rec_on or not mulaw_bytes:
+            return
+        try:
+            now = time.monotonic()
+            if self._rec_t0 is None:
+                self._rec_t0 = now
+            start = int((now - self._rec_t0) * 8000)
+            if start > self._rec_max_samples:
+                return                            # cap runaway recordings
+            dec = _MULAW_DECODE
+            buf = self._rec
+            n = len(buf)
+            if n < start:                         # silence gap since the last frame
+                buf.frombytes(bytes(2 * (start - n)))   # append (start-n) zero int16 samples
+                n = start
+            for i, b in enumerate(mulaw_bytes):
+                s = dec[b]
+                idx = start + i
+                if idx < n:                       # overlap (barge-in) — sum + clamp to int16
+                    v = buf[idx] + s
+                    buf[idx] = 32767 if v > 32767 else (-32768 if v < -32768 else v)
+                else:
+                    buf.append(s)
+        except Exception:
+            pass
+
+    def _write_recording(self):
+        """Flush the mixed timeline to a mono/8kHz/16-bit WAV keyed by call_sid. Guarded."""
+        if not self._rec_on or not self._rec or not self.call_id:
+            return
+        try:
+            import wave
+            import store
+            path = store.recording_path(self.call_id)
+            with wave.open(path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(8000)
+                wf.writeframes(self._rec.tobytes())
+            logger.info(f"Saved call recording: {path} ({len(self._rec) / 8000:.0f}s)")
+        except Exception as e:
+            logger.warning(f"Failed to write call recording: {e}")
 
     # ---- outbound (Gemini -> Plivo) ----
 
@@ -217,6 +303,7 @@ class PlivoMediaBridge:
                         "payload": payload,
                     },
                 })
+                self._rec_add(frame)               # record what the caller heard (agent side)
                 now = time.monotonic()
                 next_t = (next_t or now) + ULAW_FRAME_S
                 delay = next_t - time.monotonic()
@@ -320,6 +407,17 @@ class PlivoMediaBridge:
                     payload = media.get("payload")
                     if payload:
                         mulaw_bytes = base64.b64decode(payload)
+                        # Real-time VAD: stamp caller activity the instant a VOICED inbound frame
+                        # arrives — long before Gemini transcribes it — so the idle guard / hangup
+                        # never fire while the caller is actually talking. Energy-gated so continuous
+                        # silence/comfort-noise frames (Plivo streams ~20ms frames non-stop) don't count.
+                        track = str(media.get("track") or "inbound").lower()
+                        if track == "inbound":
+                            self._rec_add(mulaw_bytes)   # record the caller side (all frames)
+                            if _mulaw_frame_meansquare(mulaw_bytes) >= self._vad_ms_threshold:
+                                now_v = time.monotonic()
+                                self._last_caller_audio = now_v
+                                self._last_activity = now_v
                         await self.audio_input_queue.put(mulaw_to_pcm16k(mulaw_bytes))
 
                 elif event == "dtmf":
@@ -365,8 +463,24 @@ class PlivoMediaBridge:
                 stable = 0                         # more audio arrived; keep waiting
             await asyncio.sleep(0.02)
         await asyncio.sleep(grace)                 # let Plivo finish playing + a natural pause
+        # Last-instant save: if the caller is voicing RIGHT NOW (audio arrived but transcription
+        # hasn't produced a "user" event yet), don't cut them off — abort and keep the line up.
+        if self._caller_voiced_recently():
+            logger.info("Caller voiced within abort window; ABORTING hangup (mid-speech save)")
+            self._pending_hangup_task = None
+            return
         if self.call_id:
             await dialer.hangup_call(self.call_id)
+
+    def _caller_voiced_recently(self) -> bool:
+        """True if the caller produced VOICE within the abort window — used to cancel a
+        pending hangup so we never cut someone off who's just started talking. Keyed on
+        inbound-only audio, so the agent's own goodbye can never trigger it."""
+        try:
+            window = float(os.getenv("EO_HANGUP_ABORT_WINDOW_SECONDS", "1.2"))
+        except ValueError:
+            window = 1.2
+        return (time.monotonic() - self._last_caller_audio) <= window
 
     async def _max_duration_guard(self):
         """Safety net: hang up a call that runs longer than CALL_MAX_SECONDS."""
@@ -393,13 +507,15 @@ class PlivoMediaBridge:
                 return float(os.getenv(name, str(default)))
             except (TypeError, ValueError):
                 return default
-        post_rsvp = _cfg("EO_POST_RSVP_IDLE_SECONDS", 8.0)
+        post_rsvp = _cfg("EO_POST_RSVP_IDLE_SECONDS", 12.0)
         dead_air = _cfg("EO_IDLE_HANGUP_SECONDS", 25.0)
         try:
             while True:
                 await asyncio.sleep(1.0)
                 if self._pending_hangup_task and not self._pending_hangup_task.done():
                     continue                       # already ending
+                if time.monotonic() < self._hold_until:
+                    continue                       # caller asked to hold — keep the line open
                 idle = time.monotonic() - self._last_activity
                 if self._rsvp_recorded and idle >= post_rsvp:
                     logger.info(f"Idle {idle:.0f}s after RSVP; scheduling hangup")
@@ -429,6 +545,12 @@ class PlivoMediaBridge:
             await asyncio.sleep(grace)
         except asyncio.CancelledError:
             return                          # caller resumed — do NOT hang up
+        # Caller started talking during the grace window (audio in, transcription still catching up)?
+        # Abort here too — _drain_then_hangup re-checks as the authoritative gate.
+        if self._caller_voiced_recently():
+            logger.info("Caller voiced during end grace; ABORTING hangup (mid-speech save)")
+            self._pending_hangup_task = None
+            return
         await asyncio.shield(self._drain_then_hangup())
 
     async def _gemini_loop(self):
@@ -472,6 +594,19 @@ class PlivoMediaBridge:
                         logger.info("Agent requested end_call; will hang up after grace window")
                         self._schedule_end()
                         continue           # stay live during the grace window
+                    # Caller asked to hold / wait — keep the line open, cancel any pending hangup,
+                    # and DON'T treat it as a sign-off (deterministic, independent of the model).
+                    if etype == "user" and _HOLD_RE.search(event.get("text") or ""):
+                        try:
+                            hold = float(os.getenv("EO_HOLD_GRACE_SECONDS", "30"))
+                        except ValueError:
+                            hold = 30.0
+                        self._hold_until = time.monotonic() + hold
+                        if self._pending_hangup_task and not self._pending_hangup_task.done():
+                            self._pending_hangup_task.cancel()
+                            self._pending_hangup_task = None
+                        logger.info(f"Caller asked to hold; staying on the line for {hold:.0f}s")
+                        continue
                     # Decide what a caller utterance means around the end of the call.
                     if self._pending_hangup_task and not self._pending_hangup_task.done():
                         #  - a simple "bye/thanks/okay" -> let the hangup proceed (don't re-engage)
@@ -519,6 +654,7 @@ class PlivoMediaBridge:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            self._write_recording()            # audio tasks stopped — flush the mixed WAV
             if self._started and not self._call_end_emitted:
                 self._call_end_emitted = True
                 await self._emit({"type": "call_end"})

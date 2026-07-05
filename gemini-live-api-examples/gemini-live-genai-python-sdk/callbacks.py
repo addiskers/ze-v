@@ -37,6 +37,40 @@ def _iso(dt):
     return dt.astimezone(timezone.utc).isoformat()
 
 
+# ── calling hours (the night hard-stop) — minutes-since-midnight in the calling tz ──
+def hhmm_to_min(s, default=0):
+    """'09:00' -> 540. Returns `default` on bad input."""
+    try:
+        hh, mm = str(s).split(":")
+        return (int(hh) % 24) * 60 + (int(mm) % 60)
+    except Exception:
+        return default
+
+
+def now_ist_min():
+    """Current minutes-since-midnight in the calling timezone (default IST)."""
+    n = _now_utc().astimezone(_tz())
+    return n.hour * 60 + n.minute
+
+
+def in_call_window(start_min, end_min, now_min=None):
+    """True if now is inside the calling window [start, end). Handles an overnight
+    window (end <= start). No restriction when either bound is None or start == end."""
+    if start_min is None or end_min is None:
+        return True
+    s, e = int(start_min), int(end_min)
+    if s == e:
+        return True
+    m = now_ist_min() if now_min is None else int(now_min)
+    return (s <= m < e) if s < e else (m >= s or m < e)
+
+
+def global_window():
+    """Default calling window (start_min, end_min) for callbacks with no campaign — env-tunable."""
+    return (hhmm_to_min(os.getenv("EO_CALL_WINDOW_START", "09:00"), 540),
+            hhmm_to_min(os.getenv("EO_CALL_WINDOW_END", "21:00"), 1260))
+
+
 _WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
              "friday": 4, "saturday": 5, "sunday": 6}
 _DAYPARTS = {"morning": (10, 0), "afternoon": (15, 0), "evening": (18, 0),
@@ -162,7 +196,7 @@ def compute_due_at(callback_time_iso, callback_time_text):
 
 
 def new_callback_record(*, to, due_at, source_text, due_source,
-                        origin_call_id, generation=0):
+                        origin_call_id, generation=0, campaign_id=None):
     """Build the `callback` block stored on a call record."""
     return {
         "status": "pending",          # pending|in_flight|completed|failed|cancelled
@@ -179,4 +213,5 @@ def new_callback_record(*, to, due_at, source_text, due_source,
         "result_call_id": None,       # Plivo request_uuid once dialed
         "generation": int(generation or 0),
         "origin_call_id": origin_call_id,
+        "campaign_id": campaign_id,   # so the redialed call updates the campaign contact + inherits its window
     }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, qs, getToken } from '../api.js'
+import { api, qs, getToken, getBlob } from '../api.js'
 import { useAuth } from '../auth.jsx'
 import { IconSearch, IconDownload, IconPhone } from './icons.jsx'
 
@@ -145,7 +145,7 @@ export default function CallLogs({ campaignId, title = 'Call Logs', showCampaign
               <tr key={c.id || c.call_sid} className="clickable" onClick={() => openDetail(c)}>
                 <td>{fmtDate(c.started_at)}</td>
                 <td><span className="pill src">{c.source || '—'}</span></td>
-                <td>{c.caller || c.phone || '—'}</td>
+                <td>{c.caller || c.phone || '—'}{c.has_recording && <span title="Recording available" style={{ marginLeft: 6 }}>🔊</span>}</td>
                 {showCampaignColumn && <td>{c.campaign_name || <span className="muted">—</span>}</td>}
                 <td className="num">{fmtDur(c.duration_seconds)}</td>
                 <td>{c.language || '—'}</td>
@@ -182,6 +182,18 @@ function CallDrawer({ call, onClose }) {
   const { isAdmin } = useAuth()
   const msgs = call.messages || call.transcript || []
   const hasCost = isAdmin && (call.total_cost_usd != null || call.gemini_cost_usd != null)
+  const [audioUrl, setAudioUrl] = useState(null)
+  const [audioErr, setAudioErr] = useState('')
+  const callKey = call.id || call.call_sid
+  useEffect(() => {
+    if (!call.has_recording || !callKey) return undefined
+    let url = null, alive = true
+    setAudioErr('')
+    getBlob(`/calls/${encodeURIComponent(callKey)}/audio`)
+      .then((b) => { if (alive) { url = URL.createObjectURL(b); setAudioUrl(url) } })
+      .catch(() => { if (alive) setAudioErr('Recording unavailable') })
+    return () => { alive = false; if (url) URL.revokeObjectURL(url) }
+  }, [callKey, call.has_recording])
   return (
     <div className="backdrop" onClick={onClose}>
       <div className="modal" style={{ maxWidth: 540, maxHeight: '85vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
@@ -204,6 +216,14 @@ function CallDrawer({ call, onClose }) {
               <div><span className="muted" style={{ fontSize: '0.7rem' }}>Gemini</span><div style={{ fontFamily: 'var(--mono)' }}>{fmtCost(call.gemini_cost_usd)}</div></div>
               <div><span className="muted" style={{ fontSize: '0.7rem' }}>Tokens</span><div style={{ fontFamily: 'var(--mono)' }}>{call.tokens?.total ?? '—'}</div></div>
             </div>
+          </div>
+        )}
+        {call.has_recording && (
+          <div className="card" style={{ marginBottom: 14, padding: 12 }}>
+            <label>Recording</label>
+            {audioErr ? <div className="muted" style={{ fontSize: '0.8rem' }}>{audioErr}</div>
+              : audioUrl ? <audio controls src={audioUrl} style={{ width: '100%' }} />
+              : <div className="muted" style={{ fontSize: '0.8rem' }}>Loading audio…</div>}
           </div>
         )}
         <label>Transcript</label>

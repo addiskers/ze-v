@@ -441,8 +441,10 @@ async def plivo_media_stream(websocket: WebSocket):
                 campaign_id = int(meta.get("campaign_id")) if meta.get("campaign_id") else None
             except (TypeError, ValueError):
                 campaign_id = None
+            origin_call_id = meta.get("origin") or event.get("origin") or None
             await recorder.open(source="plivo", call_sid=event.get("call_sid") or None,
-                                caller=caller, generation=generation, campaign_id=campaign_id)
+                                caller=caller, generation=generation, campaign_id=campaign_id,
+                                origin_call_id=origin_call_id)
         elif etype == "call_end":
             await recorder.close()
         else:

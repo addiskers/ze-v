@@ -26,7 +26,18 @@ logger = logging.getLogger(__name__)
 
 DATA_DIR = os.getenv("DATA_DIR") or os.path.join(os.path.dirname(__file__), "data")
 CALLS_DIR = os.path.join(DATA_DIR, "calls")
+RECORDINGS_DIR = os.path.join(DATA_DIR, "recordings")
 SCHED_STATE_PATH = os.path.join(DATA_DIR, "scheduler_state.json")
+
+
+def recording_path(key: str) -> str:
+    """Absolute path of a call's audio recording (WAV), keyed by call_sid. Ensures the dir."""
+    os.makedirs(RECORDINGS_DIR, exist_ok=True)
+    return os.path.join(RECORDINGS_DIR, f"{key}.wav")
+
+
+def has_recording(key: str) -> bool:
+    return bool(key) and os.path.isfile(os.path.join(RECORDINGS_DIR, f"{key}.wav"))
 
 # call_id -> lightweight meta (full record minus transcript/tool_calls)
 _INDEX = {}
@@ -309,13 +320,21 @@ async def list_pending_callbacks(now_iso):
 
 
 async def list_callbacks(statuses=None):
-    """All calls that have a callback block, optionally filtered by status set."""
+    """All calls that have a callback block, optionally filtered by status set.
+    Ordered for the Scheduler grid: upcoming (pending/in_flight) first with the SOONEST
+    due-time on top, then resolved (completed/failed/cancelled) with the most recent below."""
     with _LOCK:
         metas = [copy.deepcopy(m) for m in _INDEX.values() if m.get("callback")]
     if statuses:
         metas = [m for m in metas if m["callback"].get("status") in statuses]
-    metas.sort(key=lambda m: m["callback"].get("due_at") or "")
-    return metas
+
+    _TERMINAL = ("completed", "failed", "cancelled")
+    _due = lambda m: m["callback"].get("due_at") or ""       # ISO-8601 UTC → lexical == chronological
+    active = [m for m in metas if m["callback"].get("status") not in _TERMINAL]
+    terminal = [m for m in metas if m["callback"].get("status") in _TERMINAL]
+    active.sort(key=_due)                                    # soonest upcoming on top
+    terminal.sort(key=_due, reverse=True)                    # most-recent resolved first, below
+    return active + terminal
 
 
 async def reset_orphaned_callbacks():

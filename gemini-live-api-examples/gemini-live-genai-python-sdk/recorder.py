@@ -74,7 +74,8 @@ class CallRecorder:
 
     # ---- lifecycle ---------------------------------------------------------
 
-    async def open(self, source, call_sid=None, caller=None, generation=0, campaign_id=None):
+    async def open(self, source, call_sid=None, caller=None, generation=0, campaign_id=None,
+                   origin_call_id=None):
         try:
             call_id = uuid.uuid4().hex[:16]
             if not call_sid:
@@ -86,6 +87,7 @@ class CallRecorder:
                 "source": source,                 # 'plivo' | 'browser'
                 "caller": caller,
                 "campaign_id": campaign_id,        # None for demo/RSVP calls; set for campaign dials
+                "origin_call_id": origin_call_id,  # set only on a callback-RESULT call → back-links home
                 "generation": int(generation or 0),  # 0=original, n=nth auto-callback redial
                 "started_at": self._started_ts.isoformat(),
                 "ended_at": None,
@@ -153,8 +155,59 @@ class CallRecorder:
 
             if self.call["source"] == "twilio" and not str(self.call["call_sid"]).startswith("web-"):
                 asyncio.create_task(self._deferred_twilio_refresh(self.call["id"], self.call["call_sid"]))
+
+            # If THIS was a callback-result call, copy its real outcome back onto the origin
+            # record + campaign contact (so the person stops showing "callback" forever).
+            await self._backpropagate_to_origin()
         except Exception as e:
             logger.warning(f"CallRecorder.close failed: {e}")
+
+    async def _backpropagate_to_origin(self):
+        """If this call is a callback-RESULT (has origin_call_id) and produced a final RSVP
+        outcome, copy that outcome onto the ORIGIN call record and the campaign contact, and
+        mark the origin's callback block resolved. Idempotent; never raises."""
+        try:
+            origin_id = self.call.get("origin_call_id")
+            outcome = self.call.get("rsvp_outcome_status")
+            if not origin_id or not outcome:
+                return                          # fresh inbound / demo call, or no RSVP captured
+            # ---- (a) origin call record ----
+            try:
+                origin = await store.load_call(origin_id)
+            except Exception:
+                origin = None
+            if origin:
+                cb = origin.get("callback") or {}
+                already = cb.get("result_call_id") == self.call.get("id") and cb.get("result_outcome")
+                if not already:
+                    origin["rsvp_outcome_status"] = outcome
+                    origin["booking_created"] = bool(self.call.get("booking_created"))
+                    origin["rsvp_callback_time_text"] = self.call.get("rsvp_callback_time_text", "") or ""
+                    if outcome != "callback":
+                        origin["rsvp_do_not_contact"] = bool(self.call.get("rsvp_do_not_contact"))
+                        origin["rsvp_accompanying_children"] = self.call.get("rsvp_accompanying_children", "") or ""
+                    if cb:
+                        cb["result_outcome"] = outcome
+                        cb["result_call_id"] = self.call.get("id")
+                        # resolve the block only for a real answer, and never resurrect a cancelled one
+                        if outcome != "callback" and cb.get("status") in ("completed", "in_flight", "pending"):
+                            cb["status"] = "completed"
+                        origin["callback"] = cb
+                    try:
+                        await store.save_call(origin)
+                    except Exception as e:
+                        logger.warning(f"back-prop: origin save failed: {e}")
+            # ---- (b) campaign contact ----
+            cid = self.call.get("campaign_id")
+            caller = (self.call.get("caller") or "").strip()
+            if cid and caller:
+                try:
+                    import eo_db
+                    eo_db.cc_set_outcome_by_phone(int(cid), caller, outcome)
+                except Exception as e:
+                    logger.warning(f"back-prop: campaign contact update failed: {e}")
+        except Exception as e:
+            logger.warning(f"back-prop failed: {e}")
 
     # ---- internals ---------------------------------------------------------
 
@@ -237,6 +290,7 @@ class CallRecorder:
                 due_source=due_source,
                 origin_call_id=self.call.get("id"),
                 generation=cur_gen + 1,
+                campaign_id=self.call.get("campaign_id"),
             )
             logger.info(f"Scheduled callback for {to} at {due_at} (source={due_source}, gen={cur_gen + 1})")
         except Exception as e:

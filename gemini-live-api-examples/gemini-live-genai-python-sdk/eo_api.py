@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 import eo_auth
 import eo_db
@@ -65,6 +65,7 @@ def _label_and_strip(items: list[dict], include_cost: bool = False) -> list[dict
         c = dict(c) if include_cost else {k: v for k, v in c.items() if k not in _CALL_COST_KEYS}
         cid = c.get("campaign_id")
         c["campaign_name"] = names.get(int(cid)) if cid else None
+        c["has_recording"] = store.has_recording(c.get("call_sid"))
         out.append(c)
     return out
 
@@ -77,6 +78,7 @@ def _strip_full(call: dict, include_cost: bool = False) -> dict:
         cid = c.get("campaign_id")
         if cid:
             c["campaign_name"] = eo_db.campaign_names([cid]).get(int(cid))
+        c["has_recording"] = store.has_recording(c.get("call_sid"))
         return c
     c = {k: v for k, v in call.items() if k not in _CALL_COST_KEYS}
     for k in ("cost", "pricing"):
@@ -88,6 +90,7 @@ def _strip_full(call: dict, include_cost: bool = False) -> dict:
     cid = c.get("campaign_id")
     if cid:
         c["campaign_name"] = eo_db.campaign_names([cid]).get(int(cid))
+    c["has_recording"] = store.has_recording(c.get("call_sid"))
     return c
 
 
@@ -242,6 +245,23 @@ async def eo_call_detail(call_id: str, request: Request):
     return JSONResponse(_strip_full(call, include_cost))
 
 
+@router.get("/calls/{call_id}/audio")
+async def eo_call_audio(call_id: str, request: Request):
+    """Stream a call's recording (WAV). Same auth + per-agent scoping as the transcript."""
+    user = eo_auth.require_eo(request)
+    call = await store.load_call(call_id)
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    scope = _scope_ids(user)
+    if scope is not None and str(call.get("campaign_id") or "") not in scope:
+        raise HTTPException(status_code=404, detail="Call not found")
+    sid = call.get("call_sid")
+    if not store.has_recording(sid):
+        raise HTTPException(status_code=404, detail="Recording not found")
+    return FileResponse(store.recording_path(sid), media_type="audio/wav",
+                        filename=f"call-{call_id}.wav")
+
+
 # ── campaigns ────────────────────────────────────────────────────────────────
 def _whole_int(v, name, lo, hi):
     """Accept only a whole number in [lo, hi]; reject decimals / junk with a 400."""
@@ -331,6 +351,16 @@ async def campaign_create(request: Request):
     max_day = _whole_int(body.get("callback_max_per_day", 3), "Attempts per day", 1, 10)
     days = _whole_int(body.get("callback_days", 1), "Call-back days", 1, 10)
 
+    # calling hours (the night hard-stop) — "HH:MM" IST → minutes-since-midnight
+    def _hhmm(v, default):
+        try:
+            hh, mm = str(v).split(":")
+            return max(0, min(1439, (int(hh) % 24) * 60 + (int(mm) % 60)))
+        except Exception:
+            return default
+    call_start_min = _hhmm(body.get("call_start", "09:00"), 540)
+    call_end_min = _hhmm(body.get("call_end", "21:00"), 1260)
+
     ids = body.get("contact_ids") or []
     contacts = [c for c in eo_db.get_contacts_by_ids(ids) if c.get("status") == "valid"]
     if not contacts:
@@ -341,6 +371,7 @@ async def campaign_create(request: Request):
     cid = eo_db.create_campaign(
         name=name, start_at=start_dt.astimezone(timezone.utc).isoformat(), created_by=user["id"],
         callback_delay_hours=delay_h, callback_max_per_day=max_day, callback_days=days, status=status,
+        call_start_min=call_start_min, call_end_min=call_end_min,
     )
     eo_db.add_campaign_contacts(cid, contacts)
     return JSONResponse(eo_db.get_campaign_full(cid), status_code=201)

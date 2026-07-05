@@ -23,7 +23,9 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
+import callbacks
 import dialer
+import eo_db
 import store
 
 logger = logging.getLogger(__name__)
@@ -150,6 +152,21 @@ async def _tick():
         nr = _parse(cb.get("next_retry_at"))
         if nr is not None and nr > _now():
             continue
+        # Calling-hours hard stop: honour the originating campaign's window (else the global
+        # default). Outside the window we DEFER — leave it pending, don't fail — and try later.
+        cid = cb.get("campaign_id")
+        win = None
+        if cid:
+            try:
+                camp = eo_db.get_campaign(int(cid))
+                if camp:
+                    win = (camp.get("call_start_min"), camp.get("call_end_min"))
+            except Exception:
+                win = None
+        if win is None:
+            win = callbacks.global_window()
+        if not callbacks.in_call_window(win[0], win[1]):
+            continue
         to = cb.get("to")
         if not to:
             cb["status"] = "failed"
@@ -171,6 +188,7 @@ async def _tick():
                     base_url=os.getenv("PUBLIC_URL"),
                     gen=int(cb.get("generation", 1)),
                     origin_call_id=cb.get("origin_call_id") or call.get("id"),
+                    campaign_id=cb.get("campaign_id"),
                 ),
                 timeout=_cfg_int("CALLBACK_DIAL_TIMEOUT", 60))
         except asyncio.TimeoutError:

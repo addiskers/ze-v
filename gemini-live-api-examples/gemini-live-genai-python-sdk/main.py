@@ -76,17 +76,15 @@ def handle_record_rsvp(**kwargs):
         "note": kwargs.get("note", "") or "",
         "event": EVENT,
     }
-    # On the modern SDK (google-genai>=2.10) record_rsvp's response is SILENT-scheduled, so it
-    # adds NO fresh generation — the verbose "give your reply now" text is then dead weight that
-    # only nudges an extra spoken closing, so we drop it. On the OLD SDK (no SILENT) the model may
-    # record BEFORE speaking, so keep the CONDITIONAL instruction (speak only if it hasn't yet) or
-    # it goes mute — while forbidding a second closing.
-    if _SILENT_SCHEDULING is None:
-        result["instruction"] = ("Recorded — silent office bookkeeping, invisible to the member. "
-                                 "Only if you have said NOTHING to the member about this answer yet, "
-                                 "give your one brief reply now. If you have already replied at all, "
-                                 "stay completely silent — do not add to it, rephrase it, or repeat it, "
-                                 "and never give a second closing.")
+    # record_rsvp is a normal BLOCKING tool now (not SILENT), so its result prompts one turn.
+    # ALWAYS return the CONDITIONAL instruction: it guarantees the member hears a closing (speak
+    # if you haven't) WITHOUT a double/rephrased closing (stay silent if you already replied).
+    # This is the mute-proof path — never let the model record in silence.
+    result["instruction"] = ("Recorded — silent office bookkeeping, invisible to the member. "
+                             "Only if you have said NOTHING to the member about this answer yet, "
+                             "give your ONE brief spoken closing now. If you have already replied at all, "
+                             "stay completely silent — do not add to it, rephrase it, or repeat it, "
+                             "and never give a second closing.")
     return result
 
 

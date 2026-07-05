@@ -157,11 +157,13 @@ def _mulaw_frame_meansquare(mulaw_bytes: bytes) -> float:
 
 
 def pcm24k_to_mulaw(pcm_bytes: bytes) -> bytes:
-    """Convert PCM 16-bit 24kHz (Gemini output) -> mulaw 8kHz (Plivo)."""
+    """Convert PCM 16-bit 24kHz (Gemini output) -> mulaw 8kHz (Plivo). Downsample 3:1 with a cheap
+    3-tap average (a low-pass) instead of naive decimation, so frequencies above 4kHz don't alias
+    into a metallic/robotic tone — this also makes the agent's LIVE voice clearer to the caller."""
     n_samples = len(pcm_bytes) // 2
     samples = struct.unpack(f"<{n_samples}h", pcm_bytes)
-    # Downsample 24kHz -> 8kHz (take every 3rd sample)
-    samples_8k = samples[::3]
+    samples_8k = [(samples[i] + samples[i + 1] + samples[i + 2]) // 3
+                  for i in range(0, n_samples - 2, 3)]
     return bytes(_pcm16_to_mulaw_sample(s) for s in samples_8k)
 
 
@@ -243,8 +245,8 @@ class PlivoMediaBridge:
             for i, b in enumerate(mulaw_bytes):
                 s = dec[b]
                 idx = start + i
-                if idx < n:                       # overlap (barge-in) — sum + clamp to int16
-                    v = buf[idx] + s
+                if idx < n:                       # overlap (barge-in) — AVERAGE (no clip) not raw sum
+                    v = (buf[idx] + s) >> 1       # -6dB mix keeps both voices in-range, no distortion
                     buf[idx] = 32767 if v > 32767 else (-32768 if v < -32768 else v)
                 else:
                     buf.append(s)

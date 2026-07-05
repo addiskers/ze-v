@@ -118,10 +118,10 @@ record_rsvp is silent bookkeeping for the office. It is INVISIBLE. Never mention
 - Record the outcome once it's clearly final. Never end a call without exactly one recorded outcome; if the call drops or there's no clear answer, record "callback".
 - If they share their name, pass it as guest_name. For "callback", pass callback_time_text in their own words, and if any time is implied also compute callback_time_iso in IST from the current date-time above (e.g. "after 5 minutes" → now + 5 minutes; "tomorrow 6pm" → the ISO time). Leave callback_time_iso empty only if no time was mentioned.
 - "Hold on / give me a minute / one moment / wait / hang on" is NOT a callback — it means stay on the line RIGHT NOW. Do NOT record "callback" for it and do NOT compute a callback_time_iso; just wait for them (see the HOLD section below).
-- If a child will come along, note it with the age (e.g. "son 14, accompanying"; "daughter 10, member happy to bring").
+- If a child will come along, note it with the age (e.g. "son 14, accompanying"; "daughter 10, member happy to bring"). When you ask a child's age, ask ONLY that — do NOT bundle "how old are they?" with "are you all coming?" in the same breath. Get the age, then take their answer, and only once attendance is clearly settled do you SPEAK your one closing and record. Never record on a half-answer (e.g. just an age with no confirmation) — if it's still unclear, ask one short "So can I count you all in?" and wait.
 
-## SPEAK FIRST, THEN RECORD
-When the answer's clear, SPEAK your one short reply first (follow the GOLDEN RULE — one reply, then stop), and only AFTER you've said it do you silently call record_rsvp. Never record before you've spoken, and never speak again just because record_rsvp came back.
+## ALWAYS SPEAK A CLOSING — never record in silence
+Whenever you record an outcome, the member MUST hear a spoken closing — dead silence is broken. So SPEAK your one short reply out loud FIRST (follow the GOLDEN RULE — one reply, then stop), and only AFTER you've said it do you call record_rsvp. Recording is NEVER a substitute for speaking: never call record_rsvp in a turn where you haven't said your closing out loud. After recording: if you've already given your closing, stay silent; but if for any reason the outcome got recorded without you speaking, give your ONE brief closing now — never leave the member hanging in silence.
 
 ## YOUR ONE SHORT REPLY (one shape — pick ONE tone, never two)
 Every reply has the SAME shape: [one warm acknowledgement] + [details are coming on the WhatsApp group soon] + [one short closing line]. Say it ONCE in a single breath, then stop. Pick the SINGLE tone that matches the OVERALL outcome — never blend two tones and never give two closings in one turn:
@@ -187,14 +187,12 @@ TOOLS = [
     }
 ]
 
-# When the SDK supports async function calling, mark record_rsvp NON_BLOCKING so its
-# result (returned with scheduling=SILENT below) is added to context WITHOUT prompting
-# a new generation — this is the protocol-level cure for the double reply. end_call
-# stays blocking so the goodbye/hangup sequencing in plivo_handler is unaffected.
-if _NONBLOCKING_BEHAVIOR is not None:
-    for _tool in TOOLS:
-        if _tool["name"] == "record_rsvp":
-            _tool["behavior"] = _NONBLOCKING_BEHAVIOR
+# record_rsvp is kept BLOCKING with a normal (WHEN_IDLE) response — NOT NON_BLOCKING/SILENT.
+# SILENT would suppress a fresh turn, so if the model records the outcome WITHOUT first speaking a
+# closing, the member hears dead air (the mute bug). Blocking + a CONDITIONAL tool-result
+# instruction (main.handle_record_rsvp) instead GUARANTEES the model gets a turn to speak its one
+# closing if it hasn't yet, and stay silent if it already did (no double/rephrased closing).
+# We keep the feature-detect above but deliberately do not apply NON_BLOCKING/SILENT to record_rsvp.
 
 class GeminiLive:
     """
@@ -368,13 +366,11 @@ class GeminiLive:
                                         except Exception as e:
                                             result = f"Error: {e}"
 
-                                        # record_rsvp is silent: when the SDK supports it, return the
-                                        # result with SILENT scheduling so it is added to context WITHOUT
-                                        # triggering a new generation (kills the double-reply). end_call
-                                        # stays a normal (blocking) response.
+                                        # Normal (blocking, WHEN_IDLE) tool response for BOTH tools. For
+                                        # record_rsvp this lets the result prompt one turn so the model can
+                                        # speak its closing if it hasn't (mute-proof); the CONDITIONAL
+                                        # instruction in the result keeps it to a single closing.
                                         fr_kwargs = {"name": func_name, "id": fc.id, "response": {"result": result}}
-                                        if func_name == "record_rsvp" and _SILENT_SCHEDULING is not None:
-                                            fr_kwargs["scheduling"] = _SILENT_SCHEDULING
                                         function_responses.append(types.FunctionResponse(**fr_kwargs))
                                         await event_queue.put({"type": "tool_call", "name": func_name, "args": args, "result": result})
 

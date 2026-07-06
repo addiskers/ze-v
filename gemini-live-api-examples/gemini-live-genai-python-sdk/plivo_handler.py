@@ -80,7 +80,8 @@ def _looks_like_goodbye(text: str) -> bool:
 # markers; two of the same in one turn = a repeat.
 _CLOSING_MARKERS = (
     "see you on the", "so glad you", "we'll miss you", "we will miss you",
-    "drop all the details", "details on the whatsapp", "on the whatsapp group",
+    "drop all the details", "receive all the details", "details on the whatsapp",
+    "details on your whatsapp", "on the whatsapp group",
     "anything else i can help", "look forward to seeing you",
 )
 

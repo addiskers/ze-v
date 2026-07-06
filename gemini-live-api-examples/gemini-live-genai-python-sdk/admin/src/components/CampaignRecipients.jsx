@@ -61,15 +61,16 @@ export default function CampaignRecipients({ campaignId }) {
               <th className="no-sort">Status</th>
               <th className="no-sort num">Attempts</th>
               <th className="no-sort">Last Attempt</th>
+              <th className="no-sort">Next Attempt</th>
               <th className="no-sort">Last Error</th>
               <th className="no-sort">Action</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="empty">Loading…</td></tr>
+              <tr><td colSpan={8} className="empty">Loading…</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={7} className="empty">No recipients.</td></tr>
+              <tr><td colSpan={8} className="empty">No recipients.</td></tr>
             ) : items.map((c) => {
               const clickable = (c.attempts || 0) > 0
               return (
@@ -81,6 +82,11 @@ export default function CampaignRecipients({ campaignId }) {
                   <td><span className={`pill ${c.call_status}`}>{c.call_status}</span></td>
                   <td className="num">{c.attempts}</td>
                   <td>{c.last_attempt_at ? fmtDate(c.last_attempt_at) : <span className="muted">—</span>}</td>
+                  <td>
+                    {c.call_status === 'pending'
+                      ? (c.next_attempt_at ? fmtDate(c.next_attempt_at) : <span className="muted">Queued</span>)
+                      : <span className="muted">—</span>}
+                  </td>
                   <td style={{ maxWidth: 260, color: c.last_error ? '#fca5a5' : 'var(--muted)', fontSize: '0.78rem' }}>
                     {c.last_error || '—'}
                   </td>

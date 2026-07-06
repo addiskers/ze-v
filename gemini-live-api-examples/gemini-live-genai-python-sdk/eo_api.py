@@ -422,6 +422,18 @@ async def campaign_contacts(campaign_id: int, request: Request):
         limit=int(qp.get("limit") or 500), offset=int(qp.get("offset") or 0)))
 
 
+@router.get("/scheduler/campaign-queue")
+async def scheduler_campaign_queue(request: Request):
+    """Upcoming campaign dials for the Scheduler page — pending/calling contacts in
+    live/scheduled campaigns, soonest first. Scoped: a Superadmin sees every campaign;
+    an Admin sees only the campaigns they created."""
+    user = eo_auth.require_eo(request)
+    ids = _scope_ids(user)                       # None → full access (Superadmin)
+    campaign_ids = None if ids is None else [int(i) for i in ids]
+    limit = int(request.query_params.get("limit") or 200)
+    return JSONResponse(eo_db.cc_upcoming(campaign_ids, limit=limit))
+
+
 @router.post("/campaigns/{campaign_id}/contacts/{cc_id}/retry")
 async def campaign_contact_retry(campaign_id: int, cc_id: int, request: Request):
     """'Call now' — dial this recipient immediately (promotes a scheduled campaign to live)."""

@@ -417,6 +417,30 @@ def cc_open_count(campaign_id: int) -> int:
     return int(r["c"]) if r else 0
 
 
+def cc_upcoming(campaign_ids=None, limit=200):
+    """Upcoming campaign dial queue: open (pending/calling) contacts in live/scheduled
+    campaigns, soonest next-attempt first. Joins the campaign name/status/start so the
+    Scheduler view can show WHEN each will ring. campaign_ids=None → all campaigns
+    (Superadmin); an explicit (possibly empty) list scopes to an owner's campaigns."""
+    where = ["cc.call_status IN ('pending','calling')", "c.status IN ('live','scheduled')"]
+    params = []
+    if campaign_ids is not None:
+        if not campaign_ids:
+            return {"items": [], "total": 0}
+        ph = ",".join("?" for _ in campaign_ids)
+        where.append(f"cc.campaign_id IN ({ph})")
+        params.extend(int(i) for i in campaign_ids)
+    base = ("FROM campaign_contacts cc JOIN campaigns c ON c.id = cc.campaign_id "
+            "WHERE " + " AND ".join(where))
+    total = _one(f"SELECT COUNT(*) AS n {base}", tuple(params))["n"]
+    rows = _rows(
+        "SELECT cc.*, c.name AS campaign_name, c.status AS campaign_status, "
+        f"c.start_at AS campaign_start_at {base} "
+        "ORDER BY (cc.next_attempt_at IS NULL) DESC, cc.next_attempt_at ASC, cc.id ASC LIMIT ?",
+        tuple(params) + (int(limit),))
+    return {"items": rows, "total": int(total)}
+
+
 def get_campaign_contact(cc_id) -> dict | None:
     return _one("SELECT * FROM campaign_contacts WHERE id = ?", (int(cc_id),))
 

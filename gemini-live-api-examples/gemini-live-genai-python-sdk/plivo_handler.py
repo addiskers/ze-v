@@ -21,6 +21,7 @@ import array
 import base64
 import json
 import logging
+import math
 import os
 import re
 import struct
@@ -172,6 +173,31 @@ ULAW_FRAME_BYTES = 160
 ULAW_FRAME_S = 0.020
 
 
+# Soft "connecting" ringback to fill the 2-4s of dead air after the caller answers but
+# before Gemini produces the greeting. A gentle ~400 Hz purr at low volume, cadence
+# 0.4s on / 0.2s off / 0.4s on / 0.8s off (each segment a whole number of 20ms frames),
+# looped until the agent's first audio arrives. Built once and cached.
+_RINGBACK_FRAMES = None
+
+
+def _ringback_frames():
+    """One cadence cycle of the connect ringback as a list of 20ms mulaw frames."""
+    global _RINGBACK_FRAMES
+    if _RINGBACK_FRAMES is not None:
+        return _RINGBACK_FRAMES
+    rate, freq, amp = 8000, 400.0, 0.16          # amp 0.16 of full-scale = soft
+    def tone(dur):
+        n = int(rate * dur)
+        return [int(amp * 32767 * math.sin(2 * math.pi * freq * i / rate)) for i in range(n)]
+    def silence(dur):
+        return [0] * int(rate * dur)
+    pcm = tone(0.4) + silence(0.2) + tone(0.4) + silence(0.8)   # 1.8s = 90 whole frames
+    ulaw = bytes(_pcm16_to_mulaw_sample(s) for s in pcm)
+    _RINGBACK_FRAMES = [ulaw[i:i + ULAW_FRAME_BYTES]
+                        for i in range(0, len(ulaw) - ULAW_FRAME_BYTES + 1, ULAW_FRAME_BYTES)]
+    return _RINGBACK_FRAMES
+
+
 class PlivoMediaBridge:
     """Bridges a Plivo bidirectional Audio Stream WebSocket with a Gemini Live session."""
 
@@ -200,6 +226,10 @@ class PlivoMediaBridge:
         self._started = False
         self._call_end_emitted = False
         self._pending_hangup_task = None
+        # Connect ringback: soft tone that fills the post-answer / pre-greeting gap,
+        # stopped the instant the agent's first audio arrives.
+        self._agent_audio_started = False
+        self._connect_tone_task = None
         # Auto-hangup signals (so the call ends even if the agent never calls end_call):
         self._rsvp_recorded = False              # set True once record_rsvp fires
         self._last_activity = time.monotonic()   # last time either party spoke / a turn ended
@@ -272,10 +302,46 @@ class PlivoMediaBridge:
 
     # ---- outbound (Gemini -> Plivo) ----
 
+    async def _play_connect_tone(self):
+        """Fill the gap between the caller answering and the agent's first words with a
+        soft ringback, so they never hear dead air. Loops the cadence until the agent
+        starts speaking or a safety cap elapses (in case Gemini never produces audio)."""
+        try:
+            cap_s = min(float(os.getenv("EO_CONNECT_TONE_MAX_S", "8")), 15.0)
+        except ValueError:
+            cap_s = 8.0
+        frames = _ringback_frames()
+        started = time.monotonic()
+        i = 0
+        try:
+            while not self._agent_audio_started and (time.monotonic() - started) < cap_s:
+                if self.stream_id:
+                    await self._out_frames.put(frames[i % len(frames)])
+                i += 1
+                await asyncio.sleep(ULAW_FRAME_S)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning(f"connect-tone error: {e}")
+
+    def _stop_connect_tone(self):
+        """Agent audio is starting (or the call is ending): stop the ringback and drop any
+        of its frames still queued, so the greeting plays immediately with no tail."""
+        self._agent_audio_started = True
+        if self._connect_tone_task and not self._connect_tone_task.done():
+            self._connect_tone_task.cancel()
+        try:
+            while True:
+                self._out_frames.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+
     async def audio_output_callback(self, data: bytes):
         """Gemini produced audio (24k PCM16). Convert to mulaw 8k and chunk into 20ms frames."""
         if not self.stream_id:
             return
+        if not self._agent_audio_started:
+            self._stop_connect_tone()            # first real agent audio → cut the connect ringback
         if self._suppress_turn:
             return                               # a repeated closing was detected — drop the duplicate audio
         try:
@@ -394,6 +460,10 @@ class PlivoMediaBridge:
                         await self._emit({"type": "call_start", "call_sid": self.call_id or "",
                                           "caller": self.caller or "",
                                           "generation": self.generation})
+                        # Start the soft connect ringback (once per call) so the caller isn't
+                        # met with silence while Gemini spins up the greeting.
+                        if not self._agent_audio_started:
+                            self._connect_tone_task = asyncio.create_task(self._play_connect_tone())
                     # Trigger the AI to start talking — personalised by first name when known.
                     if first_name:
                         trigger = (f"[The guest has just answered. Their first name is {first_name}. "
@@ -652,6 +722,8 @@ class PlivoMediaBridge:
             tasks = [gemini_task, plivo_task, sender_task, guard_task, idle_task]
             if self._pending_hangup_task:
                 tasks.append(self._pending_hangup_task)
+            if self._connect_tone_task:
+                tasks.append(self._connect_tone_task)
             for task in tasks:
                 if not task.done():
                     task.cancel()

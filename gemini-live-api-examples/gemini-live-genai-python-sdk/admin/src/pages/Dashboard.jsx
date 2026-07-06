@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom'
 import { api } from '../api.js'
 import { useAuth } from '../auth.jsx'
 import CallLogs, { fmtDate, fmtCost } from '../components/CallLogs.jsx'
-import Callbacks from '../components/Callbacks.jsx'
 import PageHeader from '../components/PageHeader.jsx'
 
 export default function Dashboard() {
@@ -86,7 +85,6 @@ export default function Dashboard() {
       )}
 
       <CallLogs title="Call Logs" showSource={false} />
-      <Callbacks title="Callbacks" />
     </div>
   )
 }

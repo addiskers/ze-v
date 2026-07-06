@@ -82,12 +82,20 @@ def _campaign_since(filters: dict) -> dict:
 
 
 def _label_and_strip(items: list[dict], include_cost: bool = False) -> list[dict]:
-    """Attach campaign_name; strip cost fields unless include_cost (eo_admin)."""
+    """Attach campaign_name + contact_name; strip cost fields unless include_cost (eo_admin).
+    Call records store only the phone (`caller`), so the person's name is resolved by phone —
+    preferring the campaign contact name we greeted with, then the global contacts pool."""
     meta = eo_db.campaign_meta([c.get("campaign_id") for c in items if c.get("campaign_id")])
+    cc_names = eo_db.names_by_campaign_phone(
+        [(c["campaign_id"], c["caller"]) for c in items if c.get("campaign_id") and c.get("caller")])
+    phone_names = eo_db.names_by_phone([c.get("caller") for c in items if c.get("caller")])
     out = []
     for c in items:
         c = dict(c) if include_cost else {k: v for k, v in c.items() if k not in _CALL_COST_KEYS}
         c["campaign_name"] = _campaign_label(c, meta)
+        cid, phone = c.get("campaign_id"), c.get("caller")
+        c["contact_name"] = ((cc_names.get((int(cid), str(phone))) if cid and phone else None)
+                             or (phone_names.get(str(phone)) if phone else None) or "")
         c["has_recording"] = store.has_recording(c.get("call_sid"))
         out.append(c)
     return out
@@ -243,12 +251,11 @@ async def eo_calls_csv(request: Request):
     data = await store.list_calls(filters)
     items = _label_and_strip(data["items"], include_cost)
     buf = io.StringIO()
-    cols = ["started_at", "call_sid", "source", "caller", "campaign_name",
-            "duration_seconds", "language", "status", "booking_created", "rsvp_outcome_status"]
-    if include_cost:
-        cols += ["total_cost_usd", "gemini_cost_usd"]
+    # Exactly: caller name, phone, date/time, status, RSVP, duration (everything else is on the grid).
+    cols = ["contact_name", "caller", "started_at", "status", "rsvp_outcome_status", "duration_seconds"]
+    headers = ["Name", "Phone", "Date/Time", "Status", "RSVP", "Duration (s)"]
     w = csv.writer(buf)
-    w.writerow(cols)
+    w.writerow(headers)
     for c in items:
         w.writerow([c.get(k) for k in cols])
     return Response(content=buf.getvalue(), media_type="text/csv",

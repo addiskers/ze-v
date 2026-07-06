@@ -435,7 +435,8 @@ def cc_upcoming(campaign_ids=None, limit=200):
     total = _one(f"SELECT COUNT(*) AS n {base}", tuple(params))["n"]
     rows = _rows(
         "SELECT cc.*, c.name AS campaign_name, c.status AS campaign_status, "
-        f"c.start_at AS campaign_start_at {base} "
+        "c.start_at AS campaign_start_at, c.callback_max_per_day AS campaign_max_per_day, "
+        f"c.callback_days AS campaign_days {base} "
         "ORDER BY (cc.next_attempt_at IS NULL) DESC, cc.next_attempt_at ASC, cc.id ASC LIMIT ?",
         tuple(params) + (int(limit),))
     return {"items": rows, "total": int(total)}
@@ -495,3 +496,35 @@ def campaign_meta(ids) -> dict:
     placeholders = ",".join("?" * len(ids))
     rows = _rows(f"SELECT id, name, created_at FROM campaigns WHERE id IN ({placeholders})", tuple(ids))
     return {r["id"]: {"name": r["name"], "created_at": r["created_at"]} for r in rows}
+
+
+def names_by_campaign_phone(pairs) -> dict:
+    """(campaign_id, phone) -> contact name (the name used to greet), for the given pairs.
+    Newest row wins per pair. Batch lookup so a call list resolves in one query."""
+    pairs = [(int(c), str(p)) for c, p in pairs if c and p]
+    if not pairs:
+        return {}
+    cids = sorted({c for c, _ in pairs})
+    phones = sorted({p for _, p in pairs})
+    cph = ",".join("?" * len(cids))
+    pph = ",".join("?" * len(phones))
+    rows = _rows(
+        f"SELECT campaign_id, phone, name FROM campaign_contacts "
+        f"WHERE campaign_id IN ({cph}) AND phone IN ({pph}) ORDER BY id ASC",
+        tuple(cids) + tuple(phones))
+    wanted, out = set(pairs), {}
+    for r in rows:                                    # ORDER BY id ASC → later row overwrites = newest
+        key = (int(r["campaign_id"]), str(r["phone"]))
+        if key in wanted and (r.get("name") or "").strip():
+            out[key] = r["name"]
+    return out
+
+
+def names_by_phone(phones) -> dict:
+    """phone -> contact name from the global contacts pool (fallback for non-campaign calls)."""
+    phones = sorted({str(p) for p in phones if p})
+    if not phones:
+        return {}
+    ph = ",".join("?" * len(phones))
+    rows = _rows(f"SELECT phone, name FROM contacts WHERE phone IN ({ph})", tuple(phones))
+    return {r["phone"]: r["name"] for r in rows if (r.get("name") or "").strip()}

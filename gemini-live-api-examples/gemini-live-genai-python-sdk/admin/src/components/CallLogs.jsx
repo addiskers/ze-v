@@ -30,7 +30,7 @@ function StatusPill({ call }) {
 // Reusable call-logs panel. Pass `campaignId` to scope to one campaign.
 export default function CallLogs({ campaignId, title = 'Call Logs', showCampaignColumn = true, showSource = true }) {
   const { isAdmin } = useAuth()
-  const colCount = 6 + (showSource ? 1 : 0) + (showCampaignColumn ? 1 : 0) + (isAdmin ? 1 : 0)
+  const colCount = 7 + (showSource ? 1 : 0) + (showCampaignColumn ? 1 : 0) + (isAdmin ? 1 : 0)
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -129,6 +129,7 @@ export default function CallLogs({ campaignId, title = 'Call Logs', showCampaign
             <tr>
               {th('started_at', 'Started')}
               {showSource && th('source', 'Source')}
+              {th('contact_name', 'Name')}
               {th('caller', 'Caller')}
               {showCampaignColumn && th('campaign_name', 'Campaign')}
               {th('duration_seconds', 'Duration', 'num')}
@@ -147,6 +148,7 @@ export default function CallLogs({ campaignId, title = 'Call Logs', showCampaign
               <tr key={c.id || c.call_sid} className="clickable" onClick={() => openDetail(c)}>
                 <td>{fmtDate(c.started_at)}</td>
                 {showSource && <td><span className="pill src">{c.source || '—'}</span></td>}
+                <td>{c.contact_name || <span className="muted">—</span>}</td>
                 <td>{c.caller || c.phone || '—'}{c.has_recording && <span title="Recording available" style={{ marginLeft: 6 }}>🔊</span>}</td>
                 {showCampaignColumn && <td>{c.campaign_name || <span className="muted">—</span>}</td>}
                 <td className="num">{fmtDur(c.duration_seconds)}</td>

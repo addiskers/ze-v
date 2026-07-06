@@ -30,6 +30,12 @@ from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
 
+from gemini_live import _SILENT_SCHEDULING
+# On the server (google-genai >= 2.x) record_rsvp is SILENT — its result never forces a turn, so there
+# is no "filler" turn to suppress; the only risk is a mute record, which we nudge. On <2.x this is None
+# and we keep the blocking-path forced-turn suppression.
+_RSVP_SILENT = _SILENT_SCHEDULING is not None
+
 # Mutual-goodbye detection: after the agent's goodbye + end_call, a caller who just
 # says "bye / thanks / okay" is WRAPPING UP — we should let the hangup proceed, not
 # cancel it and re-engage (which restarts the whole grace cycle and drags the call
@@ -49,6 +55,14 @@ _HOLD_RE = re.compile(
     r"\b(hold on|hold please|please hold|hang on|bear with me|one moment|just a "
     r"(sec|second|minute|moment)|give me (a|one|two|a couple|a few)|one (sec|second|minute|moment)|"
     r"two (secs|seconds|minutes)|a (minute|moment|sec|second)|wait)\b", re.I)
+
+# Post-goodbye: only a genuine question / new info should re-open the call. A bare "hello", "okay",
+# "yeah", "hmm" must NOT re-engage the model (that made it re-read its whole invitation). This is a
+# POSITIVE "is there a real follow-up?" test — used only during the pending-hangup grace window.
+_REAL_FOLLOWUP_RE = re.compile(
+    r"[?]|\b(what|whats|when|where|who|which|how|why|can i|could|would|is it|are you|do you|does|"
+    r"will|register|registration|bring|time|venue|address|dress|kids?|child|children|wife|husband|"
+    r"family|parents?|mother|father|sister|brother|change|cancel|question|but)\b", re.I)
 
 
 def _looks_like_goodbye(text: str) -> bool:
@@ -244,6 +258,7 @@ class PlivoMediaBridge:
         self._started = False
         self._call_end_emitted = False
         self._pending_hangup_task = None
+        self._ending = False                     # hangup scheduled → drop any further agent audio (no re-greet)
         # Connect ringback: soft tone that fills the post-answer / pre-greeting gap,
         # stopped the instant the agent's first audio arrives.
         self._agent_audio_started = False
@@ -368,6 +383,8 @@ class PlivoMediaBridge:
             return
         if not self._agent_audio_started:
             self._stop_connect_tone()            # first real agent audio → cut the connect ringback
+        if self._ending:
+            return                               # call is wrapping up — never play a re-greet / extra audio
         if self._suppress_turn:
             return                               # a repeated closing was detected — drop the duplicate audio
         if self._suppress_post_record:
@@ -645,6 +662,7 @@ class PlivoMediaBridge:
 
     def _schedule_end(self):
         """Schedule the hangup after a grace window (see _grace_then_hangup)."""
+        self._ending = True                      # call is wrapping up — mute any further agent audio
         if self._pending_hangup_task and not self._pending_hangup_task.done():
             return
         self._pending_hangup_task = asyncio.create_task(self._grace_then_hangup())
@@ -693,11 +711,16 @@ class PlivoMediaBridge:
                     # Feed the idle-hangup guard: mark the task done + stamp any activity.
                     if etype == "tool_call" and event.get("name") == "record_rsvp":
                         self._rsvp_recorded = True
-                        # The blocking tool-result forces one more model turn. If the agent already
-                        # spoke this closing, arm suppression so that filler turn is dropped. If it
-                        # recorded WITHOUT speaking (mute case), leave it — the forced turn delivers the
-                        # closing (mute-proof preserved).
-                        if self._spoke_since_user:
+                        if _RSVP_SILENT:
+                            # Silent RSVP: the result never forces a turn (so it can't double the closing).
+                            # Only risk is a MUTE record — recorded without speaking → nudge it to speak once.
+                            if not self._spoke_since_user:
+                                await self.text_input_queue.put(
+                                    "[Recorded. You have NOT said anything to the member about this answer yet "
+                                    "— say your ONE short closing now, then stop.]")
+                        elif self._spoke_since_user:
+                            # Blocking fallback (<2.x): the result forces one more turn; the agent already
+                            # spoke, so drop that filler turn's audio.
                             self._suppress_post_record = True
                             self._did_suppress_audio = False
                             self._suppress_post_record_at = time.monotonic()
@@ -736,6 +759,7 @@ class PlivoMediaBridge:
                         if self._pending_hangup_task and not self._pending_hangup_task.done():
                             self._pending_hangup_task.cancel()
                             self._pending_hangup_task = None
+                        self._ending = False           # staying on the line — allow agent audio again
                         logger.info(f"Caller asked to hold; staying on the line for {hold:.0f}s")
                         continue
                     # Decide what a caller utterance means around the end of the call.
@@ -746,9 +770,16 @@ class PlivoMediaBridge:
                         if etype == "user" and _looks_like_goodbye(event.get("text")):
                             logger.info("Caller said goodbye; letting the hangup proceed")
                         elif etype == "user":
-                            self._pending_hangup_task.cancel()
-                            self._pending_hangup_task = None
-                            logger.info("Caller resumed with a follow-up; cancelling hangup")
+                            # Once the RSVP is done + goodbye given, ONLY a genuine question re-opens the
+                            # call. A bare "hello / okay / hmm" must NOT re-engage (that re-read the whole
+                            # invitation) — let the hangup proceed and end cleanly.
+                            if _REAL_FOLLOWUP_RE.search(event.get("text") or ""):
+                                self._pending_hangup_task.cancel()
+                                self._pending_hangup_task = None
+                                self._ending = False
+                                logger.info("Caller asked a real follow-up; cancelling hangup")
+                            else:
+                                logger.info("Bare greeting/ack after goodbye; letting the hangup proceed")
                     elif etype == "user" and _looks_like_goodbye(event.get("text")):
                         # Caller signed off but the agent never called end_call -> end it ourselves.
                         logger.info("Caller said goodbye; scheduling hangup (agent hadn't ended)")

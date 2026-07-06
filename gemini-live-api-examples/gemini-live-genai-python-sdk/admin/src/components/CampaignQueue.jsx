@@ -49,15 +49,16 @@ export default function CampaignQueue({ title = 'Callback attempts' }) {
               <th className="no-sort">Phone Number</th>
               <th className="no-sort">Next Call</th>
               <th className="no-sort num">Attempts</th>
+              <th className="no-sort num">Total attempts</th>
               <th className="no-sort">Status</th>
               <th className="no-sort">Action</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="empty">Loading…</td></tr>
+              <tr><td colSpan={8} className="empty">Loading…</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={7} className="empty">No callback attempts pending.</td></tr>
+              <tr><td colSpan={8} className="empty">No callback attempts pending.</td></tr>
             ) : items.map((c) => (
               <tr key={c.id}>
                 <td>{c.campaign_name || <span className="muted">—</span>}</td>
@@ -65,6 +66,7 @@ export default function CampaignQueue({ title = 'Callback attempts' }) {
                 <td style={{ fontFamily: 'var(--mono)' }}>{c.phone}</td>
                 <td>{whenCell(c)}</td>
                 <td className="num">{c.attempts}</td>
+                <td className="num">{(c.campaign_max_per_day || 3) * (c.campaign_days || 1)}</td>
                 <td><span className={`pill ${c.call_status}`}>{c.call_status}</span></td>
                 <td>
                   {c.call_status === 'pending'

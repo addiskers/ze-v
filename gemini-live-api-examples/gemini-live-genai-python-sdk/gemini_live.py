@@ -26,9 +26,9 @@ except AttributeError:
                    "prompt+tool-result mitigation. Upgrade to google-genai>=2.10 for "
                    "the protocol-level fix.")
 else:
-    logger.info("google-genai async function calling available, but record_rsvp "
-                "intentionally uses BLOCKING calls + the prompt/tool-result mute-proof "
-                "(agent always speaks its closing). NON_BLOCKING/SILENT not used.")
+    logger.info("google-genai async function calling ACTIVE: record_rsvp is NON_BLOCKING + SILENT "
+                "(no forced turn → no doubled closing); the bridge nudges the agent to speak if it "
+                "records without speaking first (mute-proof).")
 
 
 def get_system_instruction():
@@ -64,8 +64,8 @@ The greeting you receive may include the member's first name ("Their first name 
 - The event: EO Gujarat's inaugural evening of the new year, on the 10th of July.
 - Special guest: Varun Dhawan — one of India's leading movie stars, behind some of Bollywood's biggest blockbusters. The highlight is a candid, on-stage conversation with him, then dinner and great company — traditionally the best-attended evening of the year.
 - Timing: the programme starts no later than 7 PM, with dinner after. Ask them to keep the evening free.
-- Who can come: EO Gujarat members with their IMMEDIATE FAMILY only — spouse, parents, siblings and children. In-laws (brother/sister-in-law, mother/father-in-law), aunts, uncles, cousins, other extended family, friends and business associates are NOT included — it's a members' evening.
-- Children: 12 and above are welcome; under 12 is only a guideline, so if a member would like to bring their younger child they're most welcome. If a child comes, note the child's age. (Age is asked ONLY of children — a spouse, parent or sibling is simply welcome, never asked an age.)
+- Who can come: EO Gujarat members with their SPOUSE and CHILDREN only. Everyone else — parents, siblings, in-laws, aunts, uncles, cousins, other family, friends and business associates — is NOT included; it's a members' evening for the member with their spouse and children.
+- Children: 12 and above are welcome; under 12 is only a guideline, so if a member would like to bring their younger child they're most welcome. If a child comes, note the child's age. (Age is asked ONLY of children — a spouse is simply welcome, never asked an age.)
 - Photos: the evening is photographed and filmed; by tradition every attendee is in the group picture with the guest, and may feature in event photos or video.
 - Parking: there's ample parking at the venue.
 - Registering: they can confirm right now with a simple Yes or No; the link is also on the WhatsApp groups.
@@ -86,8 +86,8 @@ If what you hear is clearly a RECORDING — "please leave a message", "I can't c
 - Venue / address / schedule / dress code → coming on the WhatsApp groups closer to the event.
 - Programme → a conversation with Varun, then dinner and great company. Dinner → yes, after the programme. Parking → yes, ample.
 - Photos / a photo with Varun → it's photographed, and by tradition everyone's in the group picture with him.
-- Who attends → fellow EO members with their immediate family; the best-attended evening of the year.
-- Bringing family — their SPOUSE, PARENTS, SIBLINGS (brother/sister) or CHILDREN are immediate family → warmly welcome them ("Of course — they're very welcome!") and NEVER ask an adult's age, then carry on with the invite. An IN-LAW (brother/sister-in-law, parent-in-law), aunt, uncle, cousin or friend is NOT immediate family → warmly but clearly say we can't include them this time, then invite the member with their immediate family. Hold the line: brother/sister = welcome, brother/sister-in-law = decline; parent = welcome, parent-in-law = decline.
+- Who attends → fellow EO members with their spouse and children; the best-attended evening of the year.
+- Bringing family — ONLY their SPOUSE and CHILDREN are welcome → warmly welcome those ("Of course — they're very welcome!") and NEVER ask the spouse's age, then carry on with the invite. Anyone else — a PARENT, SIBLING (brother/sister), any in-law, aunt, uncle, cousin, friend or colleague — is NOT included → warmly but clearly say we can't include them this time (it's for members with their spouse and children), then invite the member with their spouse and children. Hold the line: spouse = welcome, child = welcome; parent / brother / sister / any in-law = politely decline.
 - Bringing a CHILD / kid / son / daughter → keep it short and warm and ask the CHILD's age ("Of course — they're very welcome! How old are they?"); don't recite the policy. If they sound unsure about a little one, reassure that under-12 is fine if they'd like to bring them. Note the age — and since this usually comes before they've RSVP'd, follow with the invite ("So, can I count you in?"), not "anything else?".
 - Why this call → they're an EO member, so it's a personal invite to confirm before full details go out.
 - Register / how → just Yes or No now; the link's also on WhatsApp. Cancel / trouble registering → reach Kamraj, the Chapter Manager, on WhatsApp.
@@ -115,7 +115,7 @@ Every closing has the same shape: [one warm acknowledgement] + [details are comi
 - Not coming (no): gracious, no pressure, door open if plans change — don't re-ask → record "no".
 - Undecided / "I'll try" / busy / driving: light — ask ONCE "Should I put you down as a yes or a no for now?"; if still unsure, offer a callback, ask what time suits, mention WhatsApp → record "callback".
 - Already registered → record "yes". Wants to cancel → gracious, ask them to tell Kamraj on WhatsApp → record "no". "Don't contact me again" → acknowledge kindly → record "do_not_contact".
-If they mention several people or plans in one breath ("my husband's coming, my sister's coming, but I'm travelling"), don't reply to each part or stitch two closings together — settle silently on the ONE overall outcome, give ONE warm reply covering everyone, then stop, and put who-is-and-isn't-coming into the record_rsvp note, never as a second spoken line.
+If they mention several people or plans in one breath ("my husband's coming, the kids too, but I'm travelling"), don't reply to each part or stitch two closings together — settle silently on the ONE overall outcome, give ONE warm reply covering everyone, then stop, and put who-is-and-isn't-coming into the record_rsvp note, never as a second spoken line.
 
 ## MID-CALL
 - Questions BEFORE they answer: answer them, then ask for the RSVP just once ("So — can we count you in?"). Ask at most once per call; don't nag.
@@ -166,12 +166,16 @@ TOOLS = [
     }
 ]
 
-# record_rsvp is kept BLOCKING with a normal (WHEN_IDLE) response — NOT NON_BLOCKING/SILENT.
-# SILENT would suppress a fresh turn, so if the model records the outcome WITHOUT first speaking a
-# closing, the member hears dead air (the mute bug). Blocking + a CONDITIONAL tool-result
-# instruction (main.handle_record_rsvp) instead GUARANTEES the model gets a turn to speak its one
-# closing if it hasn't yet, and stay silent if it already did (no double/rephrased closing).
-# We keep the feature-detect above but deliberately do not apply NON_BLOCKING/SILENT to record_rsvp.
+# record_rsvp is made NON_BLOCKING + SILENT when the SDK supports it (server google-genai >= 2.x):
+# the tool result is then added WITHOUT prompting/continuing a turn, so the model can never tack on a
+# second closing ("...tenth!Oh, lovely!...tenth!") or read out meta ("Your turn completed."). The old
+# mute risk (recording without speaking → dead air) is handled at the bridge instead: if record_rsvp
+# fires and the agent hasn't spoken this turn, plivo_handler nudges it to speak its one closing.
+# On an old SDK (<2.x) the feature-detect leaves both None and we fall back to the blocking path.
+if _NONBLOCKING_BEHAVIOR is not None:
+    for _t in TOOLS:
+        if _t.get("name") == "record_rsvp":
+            _t["behavior"] = _NONBLOCKING_BEHAVIOR
 
 class GeminiLive:
     """
@@ -345,12 +349,20 @@ class GeminiLive:
                                         except Exception as e:
                                             result = f"Error: {e}"
 
-                                        # Normal (blocking, WHEN_IDLE) tool response for BOTH tools. For
-                                        # record_rsvp this lets the result prompt one turn so the model can
-                                        # speak its closing if it hasn't (mute-proof); the CONDITIONAL
-                                        # instruction in the result keeps it to a single closing.
+                                        # record_rsvp: schedule the result SILENTLY (when supported) so it
+                                        # never prompts/continues a turn — that's what stops the doubled
+                                        # closing. The bridge nudges the model to speak if it recorded in
+                                        # silence (mute-proof). end_call and the <2.x fallback stay blocking.
                                         fr_kwargs = {"name": func_name, "id": fc.id, "response": {"result": result}}
-                                        function_responses.append(types.FunctionResponse(**fr_kwargs))
+                                        if func_name == "record_rsvp" and _SILENT_SCHEDULING is not None:
+                                            fr_kwargs["scheduling"] = _SILENT_SCHEDULING
+                                        try:
+                                            function_responses.append(types.FunctionResponse(**fr_kwargs))
+                                        except (TypeError, ValueError) as e:
+                                            logger.warning(f"FunctionResponse scheduling unsupported ({e}); "
+                                                           "falling back to a blocking response")
+                                            fr_kwargs.pop("scheduling", None)
+                                            function_responses.append(types.FunctionResponse(**fr_kwargs))
                                         await event_queue.put({"type": "tool_call", "name": func_name, "args": args, "result": result})
 
                                 if function_responses:

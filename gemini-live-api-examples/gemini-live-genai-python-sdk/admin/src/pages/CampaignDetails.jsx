@@ -62,7 +62,7 @@ export default function CampaignDetails() {
 
       <CampaignRecipients campaignId={id} />
 
-      <CallLogs title="Campaign Call Logs" campaignId={id} showCampaignColumn={false} />
+      <CallLogs title="Campaign Call Logs" campaignId={id} showCampaignColumn={false} showSource={false} />
     </div>
   )
 }

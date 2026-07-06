@@ -64,6 +64,7 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
         <table>
           <thead>
             <tr>
+              <th className="no-sort">Name</th>
               <th className="no-sort">Caller</th>
               <th className="no-sort">Due</th>
               <th className="no-sort num">Attempts</th>
@@ -73,15 +74,16 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={5} className="empty">Loading…</td></tr>
+              <tr><td colSpan={6} className="empty">Loading…</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={5} className="empty">No pending callbacks.</td></tr>
+              <tr><td colSpan={6} className="empty">No pending callbacks.</td></tr>
             ) : items.map((c) => {
               const cb = c.callback || c
               const id = c.id || c.call_sid
               const done = ['completed', 'cancelled', 'in_flight'].includes(cb.status)
               return (
                 <tr key={id}>
+                  <td>{c.contact_name || <span className="muted">—</span>}</td>
                   <td>{c.caller || c.phone || '—'}</td>
                   <td>{fmtDate(cb.due_at || cb.next_retry_at)}</td>
                   <td className="num">{cb.attempts ?? 0}</td>

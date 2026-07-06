@@ -6,8 +6,8 @@ export default function Scheduler() {
   return (
     <div className="stack">
       <PageHeader title="Scheduler" sub="Pending callbacks and the upcoming campaign dial queue" />
-      <Callbacks title="Scheduled Callbacks" />
-      <CampaignQueue title="Upcoming Campaign Calls" />
+      <Callbacks title="User requested callbacks" />
+      <CampaignQueue title="Callback attempts" />
     </div>
   )
 }

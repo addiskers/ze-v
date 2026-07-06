@@ -28,9 +28,9 @@ function StatusPill({ call }) {
 }
 
 // Reusable call-logs panel. Pass `campaignId` to scope to one campaign.
-export default function CallLogs({ campaignId, title = 'Call Logs', showCampaignColumn = true }) {
+export default function CallLogs({ campaignId, title = 'Call Logs', showCampaignColumn = true, showSource = true }) {
   const { isAdmin } = useAuth()
-  const colCount = 7 + (showCampaignColumn ? 1 : 0) + (isAdmin ? 1 : 0)
+  const colCount = 6 + (showSource ? 1 : 0) + (showCampaignColumn ? 1 : 0) + (isAdmin ? 1 : 0)
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -109,11 +109,13 @@ export default function CallLogs({ campaignId, title = 'Call Logs', showCampaign
           <span className="ic"><IconSearch /></span>
           <input placeholder="Search caller / phone…" value={q} onChange={(e) => { setPage(0); setQ(e.target.value) }} />
         </div>
-        <select value={source} onChange={(e) => { setPage(0); setSource(e.target.value) }}>
-          <option value="">All Sources</option>
-          <option value="plivo">Plivo</option>
-          <option value="browser">Browser</option>
-        </select>
+        {showSource && (
+          <select value={source} onChange={(e) => { setPage(0); setSource(e.target.value) }}>
+            <option value="">All Sources</option>
+            <option value="plivo">Plivo</option>
+            <option value="browser">Browser</option>
+          </select>
+        )}
         <input type="date" value={from} onChange={(e) => { setPage(0); setFrom(e.target.value) }} title="From" />
         <input type="date" value={to} onChange={(e) => { setPage(0); setTo(e.target.value) }} title="To" />
         <button className="btn ghost sm" onClick={reset}>Reset</button>
@@ -126,7 +128,7 @@ export default function CallLogs({ campaignId, title = 'Call Logs', showCampaign
           <thead>
             <tr>
               {th('started_at', 'Started')}
-              {th('source', 'Source')}
+              {showSource && th('source', 'Source')}
               {th('caller', 'Caller')}
               {showCampaignColumn && th('campaign_name', 'Campaign')}
               {th('duration_seconds', 'Duration', 'num')}
@@ -144,7 +146,7 @@ export default function CallLogs({ campaignId, title = 'Call Logs', showCampaign
             ) : sorted.map((c) => (
               <tr key={c.id || c.call_sid} className="clickable" onClick={() => openDetail(c)}>
                 <td>{fmtDate(c.started_at)}</td>
-                <td><span className="pill src">{c.source || '—'}</span></td>
+                {showSource && <td><span className="pill src">{c.source || '—'}</span></td>}
                 <td>{c.caller || c.phone || '—'}{c.has_recording && <span title="Recording available" style={{ marginLeft: 6 }}>🔊</span>}</td>
                 {showCampaignColumn && <td>{c.campaign_name || <span className="muted">—</span>}</td>}
                 <td className="num">{fmtDur(c.duration_seconds)}</td>

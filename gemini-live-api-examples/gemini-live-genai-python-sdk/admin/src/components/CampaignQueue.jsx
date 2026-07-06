@@ -5,7 +5,7 @@ import { fmtDate } from './CallLogs.jsx'
 // Upcoming campaign dial queue — the pending/calling contacts the runner will call
 // next across the live/scheduled campaign(s). Sibling of <Callbacks> on the Scheduler
 // page: callbacks are RSVP "call me back later"; this is the campaign auto-dial queue.
-export default function CampaignQueue({ title = 'Upcoming Campaign Calls' }) {
+export default function CampaignQueue({ title = 'Callback attempts' }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -57,7 +57,7 @@ export default function CampaignQueue({ title = 'Upcoming Campaign Calls' }) {
             {loading ? (
               <tr><td colSpan={7} className="empty">Loading…</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={7} className="empty">No upcoming campaign calls.</td></tr>
+              <tr><td colSpan={7} className="empty">No callback attempts pending.</td></tr>
             ) : items.map((c) => (
               <tr key={c.id}>
                 <td>{c.campaign_name || <span className="muted">—</span>}</td>

@@ -80,11 +80,11 @@ def handle_record_rsvp(**kwargs):
     # ALWAYS return the CONDITIONAL instruction: it guarantees the member hears a closing (speak
     # if you haven't) WITHOUT a double/rephrased closing (stay silent if you already replied).
     # This is the mute-proof path — never let the model record in silence.
-    result["instruction"] = ("Recorded — silent office bookkeeping, invisible to the member. "
-                             "Only if you have said NOTHING to the member about this answer yet, "
-                             "give your ONE brief spoken closing now. If you have already replied at all, "
-                             "stay completely silent — do not add to it, rephrase it, or repeat it, "
-                             "and never give a second closing.")
+    result["instruction"] = ("SYSTEM NOTE — never voice any of this, and never mention recording or bookkeeping. "
+                             "The outcome is already saved. If you have said NOTHING to the member about this "
+                             "answer yet, speak your ONE brief closing now. If you have already replied at all, "
+                             "produce NO audio this turn — do not add to it, rephrase it, repeat it, acknowledge "
+                             "anything, or give a second closing.")
     return result
 
 

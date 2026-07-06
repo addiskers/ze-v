@@ -85,7 +85,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      <CallLogs title="Call Logs" />
+      <CallLogs title="Call Logs" showSource={false} />
       <Callbacks title="Callbacks" />
     </div>
   )

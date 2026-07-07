@@ -75,9 +75,10 @@ def _looks_like_goodbye(text: str) -> bool:
     return bool(_GOODBYE_RE.search(t))
 
 
-# Within-turn repeat guard: if the agent voices a closing phrase a SECOND time inside one
-# turn (the fusion loop), we stop feeding the duplicate audio. These are agent-side closing
-# markers; two of the same in one turn = a repeat.
+# Within-turn repeat guard: if the agent repeats itself inside ONE turn (the fusion / spiral
+# loop), we stop feeding the duplicate audio. Two paths: (1) a known closing marker voiced twice,
+# and (2) a GENERAL verbatim phrase-loop — any run of words repeated in the turn — which catches
+# callback/goodbye closings ("I'll give you a call back… speak soon!") the marker list misses.
 _CLOSING_MARKERS = (
     "see you on the", "so glad you", "we'll miss you", "we will miss you",
     "drop all the details", "receive all the details", "details on the whatsapp",
@@ -87,9 +88,21 @@ _CLOSING_MARKERS = (
 
 
 def _has_closing_repeat(turn_text: str) -> bool:
-    t = re.sub(r"[^a-z ]", " ", (turn_text or "").lower())
-    t = re.sub(r"\s+", " ", t)
-    return any(t.count(m) >= 2 for m in _CLOSING_MARKERS)
+    t = re.sub(r"[^a-z0-9 ]", " ", (turn_text or "").lower())
+    t = re.sub(r"\s+", " ", t).strip()
+    if any(t.count(m) >= 2 for m in _CLOSING_MARKERS):
+        return True
+    # General loop: any run of 6 consecutive words that appears twice in the same turn = spiralling.
+    words = t.split()
+    if len(words) < 12:
+        return False
+    seen = set()
+    for i in range(len(words) - 5):
+        g = " ".join(words[i:i + 6])
+        if g in seen:
+            return True
+        seen.add(g)
+    return False
 
 # ===== Mulaw codec tables (ITU-T G.711) =====
 

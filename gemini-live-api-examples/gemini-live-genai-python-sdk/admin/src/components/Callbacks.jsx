@@ -7,8 +7,12 @@ const pad = (n) => String(n).padStart(2, '0')
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` }
 const nowTimeStr = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}` }
 
-// Scheduler / callbacks panel — reused on Dashboard and the Scheduler page.
-export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
+// Scheduler / callbacks panel — reused on the Scheduler and Settings pages.
+// Every row here is a USER-REQUESTED callback (the member asked us to call back
+// during the call) — campaign no-answer retries live in <CampaignQueue>.
+// `statuses` (comma-separated, e.g. "pending,in_flight") narrows the list to
+// those callback statuses; empty shows the full history.
+export default function Callbacks({ title = 'Callbacks', canToggle = true, statuses = '' }) {
   const [items, setItems] = useState([])
   const [enabled, setEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -19,11 +23,11 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
 
   const load = useCallback(() => {
     setLoading(true)
-    api.get('/callbacks')
+    api.get('/callbacks' + (statuses ? `?status=${encodeURIComponent(statuses)}` : ''))
       .then((d) => { setItems(d.items || []); setEnabled(!!d.scheduler_enabled); setErr('') })
       .catch((e) => setErr(e.message))
       .finally(() => setLoading(false))
-  }, [])
+  }, [statuses])
 
   useEffect(() => { load() }, [load])
 

@@ -11,7 +11,12 @@ export function fmtDur(s) {
 }
 export function fmtDate(iso) {
   if (!iso) return '—'
-  try { return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
+  // Always render in IST regardless of the viewer's browser timezone, and label it so it's unambiguous.
+  try {
+    return new Date(iso).toLocaleString('en-US', {
+      timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    }) + ' IST'
+  }
   catch { return iso }
 }
 export function fmtCost(v) {

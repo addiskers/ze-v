@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { fmtDate } from './CallLogs.jsx'
 
-// Upcoming campaign dial queue — the pending/calling contacts the runner will call
-// next across the live/scheduled campaign(s). Sibling of <Callbacks> on the Scheduler
-// page: callbacks are RSVP "call me back later"; this is the campaign auto-dial queue.
+// Campaign RETRY attempts — only contacts the campaign runner is re-dialing after an
+// unanswered attempt (retry scheduled, retry in progress, or retried and still
+// unreached). Fresh first dials and answered contacts are NOT shown. Sibling of
+// <Callbacks> on the Scheduler page: that panel is the member's own "call me back
+// later" requests; this one is the automatic no-answer redials.
 export default function CampaignQueue({ title = 'Callback attempts' }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
@@ -85,7 +87,7 @@ export default function CampaignQueue({ title = 'Callback attempts' }) {
           </tbody>
         </table>
       </div>
-      <div className="pager"><span>{items.length} upcoming</span></div>
+      <div className="pager"><span>{items.length} callback attempt{items.length === 1 ? '' : 's'}</span></div>
     </div>
   )
 }

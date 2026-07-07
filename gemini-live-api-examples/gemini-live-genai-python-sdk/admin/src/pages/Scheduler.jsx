@@ -5,8 +5,8 @@ import PageHeader from '../components/PageHeader.jsx'
 export default function Scheduler() {
   return (
     <div className="stack">
-      <PageHeader title="Scheduler" sub="Pending callbacks and the upcoming campaign dial queue" />
-      <Callbacks title="User requested callbacks" />
+      <PageHeader title="Scheduler" sub="Callbacks the member asked for, and the campaign's no-answer retry attempts" />
+      <Callbacks title="User requested callbacks" statuses="pending,in_flight" />
       <CampaignQueue title="Callback attempts" />
     </div>
   )

@@ -28,6 +28,10 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
   useEffect(() => { load() }, [load])
 
   async function toggle() {
+    // Switching OFF pauses all dialing — warn that scheduled callbacks won't be attempted meanwhile.
+    if (enabled && !window.confirm(
+      'Switch the scheduler OFF?\n\nWhile it is off, scheduled callbacks will NOT be attempted — they will stay pending until you switch the scheduler back on.'
+    )) return
     try {
       const r = await api.post('/scheduler/toggle', { enabled: !enabled })
       setEnabled(r.enabled)
@@ -66,6 +70,7 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
             <tr>
               <th className="no-sort">Name</th>
               <th className="no-sort">Caller</th>
+              <th className="no-sort">Campaign</th>
               <th className="no-sort">Due</th>
               <th className="no-sort num">Attempts</th>
               <th className="no-sort">Status</th>
@@ -74,9 +79,9 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} className="empty">Loading…</td></tr>
+              <tr><td colSpan={7} className="empty">Loading…</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={6} className="empty">No pending callbacks.</td></tr>
+              <tr><td colSpan={7} className="empty">No pending callbacks.</td></tr>
             ) : items.map((c) => {
               const cb = c.callback || c
               const id = c.id || c.call_sid
@@ -85,11 +90,16 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true }) {
                 <tr key={id}>
                   <td>{c.contact_name || <span className="muted">—</span>}</td>
                   <td>{c.caller || c.phone || '—'}</td>
+                  <td>{c.campaign_name || <span className="muted">—</span>}</td>
                   <td>{fmtDate(cb.due_at || cb.next_retry_at)}</td>
                   <td className="num">{cb.attempts ?? 0}</td>
                   <td><span className={`pill ${(cb.status || 'pending')}`}>{cb.status || 'pending'}</span></td>
                   <td style={{ display: 'flex', gap: 6 }}>
-                    <button className="btn sm" disabled={done} onClick={() => act(id, 'call-now')}>Call now</button>
+                    <button className="btn sm" disabled={done} onClick={() => {
+                      const who = c.contact_name || c.caller || c.phone || 'this number'
+                      const when = cb.due_at ? fmtDate(cb.due_at) : 'the scheduled time'
+                      if (window.confirm(`Call ${who} NOW instead of waiting for ${when}?\n\n"Call now" dials immediately and ignores the scheduled callback time.`)) act(id, 'call-now')
+                    }}>Call now</button>
                     <button className="btn ghost sm" disabled={done} onClick={() => { setReschErr(''); setResch({ id, date: todayStr(), time: nowTimeStr() }) }}>Reschedule</button>
                     <button className="btn ghost sm" disabled={cb.status === 'cancelled'} onClick={() => act(id, 'cancel')}>Cancel</button>
                   </td>

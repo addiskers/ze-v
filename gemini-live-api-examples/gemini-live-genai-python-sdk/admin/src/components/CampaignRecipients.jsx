@@ -24,6 +24,7 @@ export default function CampaignRecipients({ campaignId }) {
   useEffect(() => { load() }, [load])
 
   async function callNow(cc) {
+    if (!window.confirm(`Call ${cc.name || cc.phone} now?`)) return
     try { await api.post(`/campaigns/${campaignId}/contacts/${cc.id}/retry`); load() }
     catch (e) { alert(e.message) }
   }

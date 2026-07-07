@@ -122,6 +122,8 @@ def _parse_text(text, now_local):
         clock = clock or _DAYPARTS["tonight"]
     elif "today" in t:
         base = now_local
+    elif "another day" in t or "some other" in t or "other day" in t or "later this week" in t:
+        base = now_local + timedelta(days=1)          # vague "another day" → next day, never same day
 
     if base is None:
         for name, wd in _WEEKDAYS.items():
@@ -185,7 +187,14 @@ def compute_due_at(callback_time_iso, callback_time_text):
                 due, source = dt, "text"
 
     if due is None:
-        due = now_utc + timedelta(seconds=_cfg_int("CALLBACK_DEFAULT_OFFSET", 7200))
+        off = (os.getenv("CALLBACK_DEFAULT_OFFSET") or "").strip()
+        if off.isdigit():
+            due = now_utc + timedelta(seconds=int(off))        # explicit env offset wins (back-compat)
+        else:
+            # No day/time captured → default to the NEXT day at 10:00 local, NOT +2h the same day
+            # (a "callback" almost always means another time, not this same afternoon).
+            due = (now_local + timedelta(days=1)).replace(
+                hour=10, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         source = "default"
 
     if due < min_dt:

@@ -21,13 +21,18 @@ export default function CampaignQueue({ title = 'Callback attempts' }) {
   useEffect(() => { load() }, [load])
 
   async function callNow(c) {
+    const at = c.campaign_status === 'scheduled' ? c.campaign_start_at : c.next_attempt_at
+    const when = at ? fmtDate(at) : 'as soon as the queue allows'
+    if (!window.confirm(`Call ${c.name || c.phone} NOW instead of waiting for ${when}?\n\n"Call now" dials immediately.`)) return
     try { await api.post(`/campaigns/${c.campaign_id}/contacts/${c.id}/retry`); load() }
     catch (e) { setErr(e.message) }
   }
 
-  // When this contact is expected to ring next.
+  // When this contact rings next (open rows) or last rang (history rows).
   function whenCell(c) {
     if (c.call_status === 'calling') return <span className="muted">In progress</span>
+    if (['done', 'failed', 'no_answer'].includes(c.call_status))   // history — show when it last rang
+      return c.last_attempt_at ? <span className="muted">{fmtDate(c.last_attempt_at)}</span> : <span className="muted">—</span>
     // A not-yet-started campaign rings at its start time; a live one at next_attempt_at.
     const at = c.campaign_status === 'scheduled' ? c.campaign_start_at : c.next_attempt_at
     return at ? fmtDate(at) : <span className="muted">Queued</span>
@@ -47,18 +52,19 @@ export default function CampaignQueue({ title = 'Callback attempts' }) {
               <th className="no-sort">Campaign</th>
               <th className="no-sort">Name</th>
               <th className="no-sort">Phone Number</th>
-              <th className="no-sort">Next Call</th>
+              <th className="no-sort">Next / last call</th>
               <th className="no-sort num">Attempts</th>
               <th className="no-sort num">Total attempts</th>
+              <th className="no-sort">Outcome</th>
               <th className="no-sort">Status</th>
               <th className="no-sort">Action</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="empty">Loading…</td></tr>
+              <tr><td colSpan={9} className="empty">Loading…</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={8} className="empty">No callback attempts pending.</td></tr>
+              <tr><td colSpan={9} className="empty">No callback attempts yet.</td></tr>
             ) : items.map((c) => (
               <tr key={c.id}>
                 <td>{c.campaign_name || <span className="muted">—</span>}</td>
@@ -67,9 +73,10 @@ export default function CampaignQueue({ title = 'Callback attempts' }) {
                 <td>{whenCell(c)}</td>
                 <td className="num">{c.attempts}</td>
                 <td className="num">{(c.campaign_max_per_day || 3) * (c.campaign_days || 1)}</td>
+                <td>{c.rsvp_outcome ? <span className={`pill ${c.rsvp_outcome}`}>{c.rsvp_outcome}</span> : <span className="muted">—</span>}</td>
                 <td><span className={`pill ${c.call_status}`}>{c.call_status}</span></td>
                 <td>
-                  {c.call_status === 'pending'
+                  {['pending', 'failed', 'no_answer'].includes(c.call_status)
                     ? <button className="btn sm" onClick={() => callNow(c)}>Call now</button>
                     : <span className="muted">—</span>}
                 </td>

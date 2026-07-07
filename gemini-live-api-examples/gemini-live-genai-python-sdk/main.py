@@ -60,7 +60,7 @@ EVENT = {
 def handle_record_rsvp(**kwargs):
     """The agent calls this once per call with the RSVP outcome."""
     status = (kwargs.get("outcome_status") or "").strip().lower()
-    if status not in ("yes", "no", "callback", "do_not_contact"):
+    if status not in ("yes", "no", "callback", "do_not_contact", "wrong_number"):
         # Back-compat: derive from the legacy `attending` boolean.
         status = "yes" if kwargs.get("attending") else "no"
     result = {
@@ -460,7 +460,7 @@ async def plivo_media_stream(websocket: WebSocket):
     bridge = PlivoMediaBridge(
         websocket=websocket,
         gemini_client=gemini_client,
-        text_trigger="[The guest has just answered the call. Greet them now with your invitation.]",
+        text_trigger="[The guest has just answered the call. You were NOT given their name, so do NOT ask 'is that…?' and never invent a name — just greet them warmly and give your invitation.]",
         on_event=broadcast_event,
         resolve_identity=_resolve_identity,
     )

@@ -418,11 +418,13 @@ def cc_open_count(campaign_id: int) -> int:
 
 
 def cc_upcoming(campaign_ids=None, limit=200):
-    """Upcoming campaign dial queue: open (pending/calling) contacts in live/scheduled
-    campaigns, soonest next-attempt first. Joins the campaign name/status/start so the
-    Scheduler view can show WHEN each will ring. campaign_ids=None → all campaigns
+    """Campaign dial attempts + upcoming queue for the Scheduler: contacts still OPEN
+    (pending/calling) OR already ATTEMPTED at least once (attempts>0), across ANY campaign
+    status — so the view shows both what's coming AND the attempt history (done/failed
+    contacts and completed campaigns no longer vanish). Open items sort first (soonest
+    next-attempt), then history by most-recent attempt. campaign_ids=None → all campaigns
     (Superadmin); an explicit (possibly empty) list scopes to an owner's campaigns."""
-    where = ["cc.call_status IN ('pending','calling')", "c.status IN ('live','scheduled')"]
+    where = ["(cc.call_status IN ('pending','calling') OR cc.attempts > 0)"]
     params = []
     if campaign_ids is not None:
         if not campaign_ids:
@@ -437,7 +439,9 @@ def cc_upcoming(campaign_ids=None, limit=200):
         "SELECT cc.*, c.name AS campaign_name, c.status AS campaign_status, "
         "c.start_at AS campaign_start_at, c.callback_max_per_day AS campaign_max_per_day, "
         f"c.callback_days AS campaign_days {base} "
-        "ORDER BY (cc.next_attempt_at IS NULL) DESC, cc.next_attempt_at ASC, cc.id ASC LIMIT ?",
+        "ORDER BY (cc.call_status IN ('pending','calling')) DESC, "
+        "(cc.next_attempt_at IS NULL) DESC, cc.next_attempt_at ASC, "
+        "cc.last_attempt_at DESC, cc.id ASC LIMIT ?",
         tuple(params) + (int(limit),))
     return {"items": rows, "total": int(total)}
 

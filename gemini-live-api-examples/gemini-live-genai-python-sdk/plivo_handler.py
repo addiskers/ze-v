@@ -521,9 +521,10 @@ class PlivoMediaBridge:
                         # or the agent re-reads its whole opening mid-call.
                         if first_name:
                             trigger = (f"[The guest has just answered. Their first name is {first_name}. "
-                                       f'Greet them by first name (e.g. "Hello {first_name}!") and give '
-                                       f"your invitation now. Use their first name naturally once or twice "
-                                       f"more — never overuse it.]")
+                                       f"Begin THE OPENING: warmly check you're speaking with {first_name} "
+                                       f'(e.g. "Hello! Is that {first_name}?") — ask ONLY that, then STOP and '
+                                       f"wait. Do NOT give the invitation until you know who answered. Use the "
+                                       f"name naturally, never overuse it.]")
                         else:
                             trigger = self.text_trigger
                         await self.text_input_queue.put(trigger)

@@ -2,12 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { fmtDate } from './CallLogs.jsx'
 
-// Campaign RETRY attempts — only contacts the campaign runner is re-dialing after an
-// unanswered attempt (retry scheduled, retry in progress, or retried and still
-// unreached). Fresh first dials and answered contacts are NOT shown. Sibling of
-// <Callbacks> on the Scheduler page: that panel is the member's own "call me back
-// later" requests; this one is the automatic no-answer redials.
-export default function CampaignQueue({ title = 'Callback attempts' }) {
+// Upcoming campaign dial queue — the pending/calling contacts the runner will call
+// next across the live/scheduled campaign(s). Sibling of <Callbacks> on the Scheduler
+// page: callbacks are RSVP "call me back later"; this is the campaign auto-dial queue.
+export default function CampaignQueue({ title = 'Callback attempts', desc = '' }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -43,7 +41,10 @@ export default function CampaignQueue({ title = 'Callback attempts' }) {
   return (
     <div className="panel">
       <div className="panel-head">
-        <h3>{title}</h3>
+        <div>
+          <h3>{title}</h3>
+          {desc && <div className="muted" style={{ fontSize: '0.78rem', marginTop: 2 }}>{desc}</div>}
+        </div>
         <button className="btn ghost sm" onClick={load}>Refresh</button>
       </div>
       {err && <div style={{ color: '#fca5a5', fontSize: '0.8rem', marginBottom: 10 }}>{err}</div>}
@@ -87,7 +88,7 @@ export default function CampaignQueue({ title = 'Callback attempts' }) {
           </tbody>
         </table>
       </div>
-      <div className="pager"><span>{items.length} callback attempt{items.length === 1 ? '' : 's'}</span></div>
+      <div className="pager"><span>{items.length} upcoming</span></div>
     </div>
   )
 }

@@ -222,6 +222,8 @@ export function CallDrawer({ call, onClose }) {
               <div><span className="muted" style={{ fontSize: '0.7rem' }}>Attempts</span><div>{call.callback.attempts ?? 0}{call.callback.max_attempts ? ` / ${call.callback.max_attempts}` : ''}</div></div>
               {call.callback.status === 'pending' && call.callback.next_retry_at &&
                 <div><span className="muted" style={{ fontSize: '0.7rem' }}>Next retry</span><div>{fmtDate(call.callback.next_retry_at)}</div></div>}
+              {call.callback.result_outcome &&
+                <div><span className="muted" style={{ fontSize: '0.7rem' }}>Result</span><div><span className={`pill ${call.callback.result_outcome}`}>{call.callback.result_outcome}</span></div></div>}
             </div>
             {call.callback.last_error && <div style={{ fontSize: '0.72rem', color: '#fca5a5', marginTop: 8 }}>{call.callback.last_error}</div>}
           </div>

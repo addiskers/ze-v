@@ -418,18 +418,13 @@ def cc_open_count(campaign_id: int) -> int:
 
 
 def cc_upcoming(campaign_ids=None, limit=200):
-    """Campaign RETRY attempts for the Scheduler's "Callback attempts" panel — ONLY
-    contacts the campaign is re-dialing after an unanswered attempt: a retry scheduled
-    (pending, attempts>=1), a retry in progress (calling, attempts>=2), or retried and
-    still unreached (failed/no_answer, attempts>=1). Excluded: the fresh first-dial
-    queue (attempts=0), a first dial in progress, and answered (done) contacts —
-    user-requested callbacks live in the callbacks store, not here. Open items sort
-    first (soonest next-attempt), then history by most-recent attempt.
-    campaign_ids=None → all campaigns (Superadmin); an explicit (possibly empty) list
-    scopes to an owner's campaigns."""
-    where = ["((cc.call_status = 'pending' AND cc.attempts >= 1) "
-             "OR (cc.call_status = 'calling' AND cc.attempts >= 2) "
-             "OR (cc.call_status IN ('failed','no_answer') AND cc.attempts >= 1))"]
+    """The "Callback attempts" grid on the Scheduler: contacts DIALED at least once
+    (attempts>0) — the automatic no-answer retries and their history — across ANY campaign
+    status. Contacts never dialed yet (attempts=0) are excluded; they enter this view once
+    their first dial happens. Open items (pending retries) sort first (soonest next-attempt),
+    then done/failed history by most-recent attempt. campaign_ids=None → all campaigns
+    (Superadmin); an explicit (possibly empty) list scopes to an owner's campaigns."""
+    where = ["cc.attempts > 0"]
     params = []
     if campaign_ids is not None:
         if not campaign_ids:

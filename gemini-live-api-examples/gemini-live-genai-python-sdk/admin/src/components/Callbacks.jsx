@@ -7,12 +7,8 @@ const pad = (n) => String(n).padStart(2, '0')
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` }
 const nowTimeStr = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}` }
 
-// Scheduler / callbacks panel — reused on the Scheduler and Settings pages.
-// Every row here is a USER-REQUESTED callback (the member asked us to call back
-// during the call) — campaign no-answer retries live in <CampaignQueue>.
-// `statuses` (comma-separated, e.g. "pending,in_flight") narrows the list to
-// those callback statuses; empty shows the full history.
-export default function Callbacks({ title = 'Callbacks', canToggle = true, statuses = '' }) {
+// Scheduler / callbacks panel — reused on Dashboard and the Scheduler page.
+export default function Callbacks({ title = 'Callbacks', desc = '', canToggle = true }) {
   const [items, setItems] = useState([])
   const [enabled, setEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -23,11 +19,11 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true, statu
 
   const load = useCallback(() => {
     setLoading(true)
-    api.get('/callbacks' + (statuses ? `?status=${encodeURIComponent(statuses)}` : ''))
+    api.get('/callbacks')
       .then((d) => { setItems(d.items || []); setEnabled(!!d.scheduler_enabled); setErr('') })
       .catch((e) => setErr(e.message))
       .finally(() => setLoading(false))
-  }, [statuses])
+  }, [])
 
   useEffect(() => { load() }, [load])
 
@@ -61,7 +57,10 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true, statu
   return (
     <div className="panel">
       <div className="panel-head">
-        <h3>{title}</h3>
+        <div>
+          <h3>{title}</h3>
+          {desc && <div className="muted" style={{ fontSize: '0.78rem', marginTop: 2 }}>{desc}</div>}
+        </div>
         <div className="toggle" onClick={canToggle ? toggle : undefined} style={{ cursor: canToggle ? 'pointer' : 'default' }}>
           Scheduler: {enabled ? 'ON' : 'OFF'}
           <span className={`track ${enabled ? 'on' : ''}`}><span className="knob" /></span>
@@ -85,7 +84,7 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true, statu
             {loading ? (
               <tr><td colSpan={7} className="empty">Loading…</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={7} className="empty">No pending callbacks.</td></tr>
+              <tr><td colSpan={7} className="empty">No callbacks yet.</td></tr>
             ) : items.map((c) => {
               const cb = c.callback || c
               const id = c.id || c.call_sid
@@ -97,7 +96,10 @@ export default function Callbacks({ title = 'Callbacks', canToggle = true, statu
                   <td>{c.campaign_name || <span className="muted">—</span>}</td>
                   <td>{fmtDate(cb.due_at || cb.next_retry_at)}</td>
                   <td className="num">{cb.attempts ?? 0}</td>
-                  <td><span className={`pill ${(cb.status || 'pending')}`}>{cb.status || 'pending'}</span></td>
+                  <td>
+                    <span className={`pill ${(cb.status || 'pending')}`}>{cb.status || 'pending'}</span>
+                    {cb.result_outcome && <span className="muted" style={{ marginLeft: 6, fontSize: '0.75rem' }}>→ {cb.result_outcome}</span>}
+                  </td>
                   <td style={{ display: 'flex', gap: 6 }}>
                     <button className="btn sm" disabled={done} onClick={() => {
                       const who = c.contact_name || c.caller || c.phone || 'this number'

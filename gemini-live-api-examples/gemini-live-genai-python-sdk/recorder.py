@@ -164,8 +164,10 @@ class CallRecorder:
 
     async def _backpropagate_to_origin(self):
         """If this call is a callback-RESULT (has origin_call_id) and produced a final RSVP
-        outcome, copy that outcome onto the ORIGIN call record and the campaign contact, and
-        mark the origin's callback block resolved. Idempotent; never raises."""
+        outcome: resolve the ORIGIN call's callback block (link it to this result + mark it
+        completed) and roll the outcome onto the campaign contact. The origin call's OWN
+        rsvp_outcome_status is left untouched — each call record is immutable history.
+        Idempotent; never raises."""
         try:
             origin_id = self.call.get("origin_call_id")
             outcome = self.call.get("rsvp_outcome_status")
@@ -176,23 +178,21 @@ class CallRecorder:
                 origin = await store.load_call(origin_id)
             except Exception:
                 origin = None
-            if origin:
-                cb = origin.get("callback") or {}
+            if origin and origin.get("callback"):
+                cb = origin["callback"]
                 already = cb.get("result_call_id") == self.call.get("id") and cb.get("result_outcome")
                 if not already:
-                    origin["rsvp_outcome_status"] = outcome
-                    origin["booking_created"] = bool(self.call.get("booking_created"))
-                    origin["rsvp_callback_time_text"] = self.call.get("rsvp_callback_time_text", "") or ""
-                    if outcome != "callback":
-                        origin["rsvp_do_not_contact"] = bool(self.call.get("rsvp_do_not_contact"))
-                        origin["rsvp_accompanying_children"] = self.call.get("rsvp_accompanying_children", "") or ""
-                    if cb:
-                        cb["result_outcome"] = outcome
-                        cb["result_call_id"] = self.call.get("id")
-                        # resolve the block only for a real answer, and never resurrect a cancelled one
-                        if outcome != "callback" and cb.get("status") in ("completed", "in_flight", "pending"):
-                            cb["status"] = "completed"
-                        origin["callback"] = cb
+                    # HISTORY IS IMMUTABLE: do NOT overwrite the origin call's own rsvp_outcome_status
+                    # (or booking_created / rsvp_* fields). Each call record is a snapshot — if call #1
+                    # recorded "callback", it STAYS "callback"; the newer result call carries the new
+                    # answer, and the final per-person outcome lives on the campaign_contacts rollup (b)
+                    # below. We only RESOLVE the callback block and link it to the result call, so the
+                    # callback moves from pending → history and the origin can show what it led to.
+                    cb["result_outcome"] = outcome
+                    cb["result_call_id"] = self.call.get("id")
+                    # resolve the block only for a real answer, and never resurrect a cancelled one
+                    if outcome != "callback" and cb.get("status") in ("completed", "in_flight", "pending"):
+                        cb["status"] = "completed"
                     try:
                         await store.save_call(origin)
                     except Exception as e:

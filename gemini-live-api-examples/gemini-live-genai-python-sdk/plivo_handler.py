@@ -825,7 +825,7 @@ class PlivoMediaBridge:
         nudge_max = int(_cfg("EO_SILENCE_NUDGE_MAX", 2))
         nudge_cooldown = _cfg("EO_SILENCE_NUDGE_COOLDOWN_S", 15.0)
         greet_nudge_s = _cfg("EO_GREETING_NUDGE_SECONDS", 4.0)
-        reply_rescue_s = _cfg("EO_UNANSWERED_REPLY_SECONDS", 4.0)
+        reply_rescue_s = _cfg("EO_UNANSWERED_REPLY_SECONDS", 5.0)
         try:
             while True:
                 await asyncio.sleep(1.0)
@@ -862,16 +862,18 @@ class PlivoMediaBridge:
                 if nudge_on and not self._rsvp_recorded and self._agent_audio_started \
                         and not self._ending and agent_quiet:
                     # Missed-reply rescue: the caller SPOKE after the agent's last audio and
-                    # got nothing back for a few seconds — Gemini sometimes fails to register
-                    # the first reply after the greeting as a turn (it may even transcribe it
-                    # and stay mute). The still-there ladder can't help here: it measures
-                    # SILENCE, and a talking caller keeps resetting it.
+                    # the AGENT has been silent for reply_rescue_s — Gemini sometimes fails to
+                    # register a reply as a turn (it may even transcribe it and stay mute).
+                    # CRITICAL: measure the AGENT's silence, not the caller's — an ignored
+                    # caller keeps repeating "hello? hello?", and keying on THEIR last voice
+                    # resets the timer forever (same reason the still-there ladder, which
+                    # measures mutual quiet, can't cover this).
                     if (not self._reply_nudged
                             and self._last_caller_audio > self._last_agent_audio
-                            and now - self._last_caller_audio >= reply_rescue_s):
+                            and now - self._last_agent_audio >= reply_rescue_s):
                         self._reply_nudged = True
-                        logger.info(f"Caller spoke {now - self._last_caller_audio:.0f}s ago with no "
-                                    f"reply; prompting the agent")
+                        logger.info(f"Agent silent {now - self._last_agent_audio:.0f}s since the "
+                                    f"caller spoke; prompting it to reply")
                         await self.text_input_queue.put(
                             "[The member just said something and is waiting. If you caught it, "
                             "reply NOW; if you did not catch it, politely ask them to repeat.]")

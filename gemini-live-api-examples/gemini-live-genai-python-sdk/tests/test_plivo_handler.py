@@ -307,6 +307,34 @@ def test_missed_reply_rescue_fires_when_caller_speech_goes_unanswered(monkeypatc
     assert len(asyncio.run(run())) == 1
 
 
+def test_missed_reply_rescue_fires_while_caller_keeps_talking(monkeypatch):
+    """THE shivi case: caller repeats 'hello hello' every 2s (fresh voiced frames) while
+    the agent stays mute. The rescue must key on the AGENT's silence — the caller's
+    repeats must not keep resetting it."""
+    monkeypatch.setenv("EO_SILENCE_CHECK", "true")
+    monkeypatch.setenv("EO_UNANSWERED_REPLY_SECONDS", "0.3")
+
+    async def run():
+        b = _bridge()
+        b._agent_audio_started = True
+        t = time.monotonic()
+        b._last_agent_audio = t - 10              # agent mute for 10s...
+        b._last_caller_audio = t - 1              # ...caller spoke just 1s ago (still trying)
+        b._last_activity = t - 1
+        task = asyncio.create_task(b._idle_hangup_guard())
+        await asyncio.sleep(1.5)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if b._pending_hangup_task:
+            b._pending_hangup_task.cancel()
+        msgs = []
+        while not b.text_input_queue.empty():
+            msgs.append(b.text_input_queue.get_nowait())
+        return [m for m in msgs if "said something" in m]
+
+    assert len(asyncio.run(run())) == 1
+
+
 def test_missed_reply_rescue_stays_quiet_when_agent_already_replied(monkeypatch):
     monkeypatch.setenv("EO_SILENCE_CHECK", "true")
     monkeypatch.setenv("EO_UNANSWERED_REPLY_SECONDS", "0.3")

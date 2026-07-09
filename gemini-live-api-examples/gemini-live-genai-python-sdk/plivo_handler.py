@@ -332,6 +332,7 @@ class PlivoMediaBridge:
         self._soft_end_at = 0.0                  # when a NON-muting hangup was scheduled (0 = none)
         self._greeting_sent_at = 0.0             # when the opening trigger was queued (0 = not yet)
         self._greeting_nudged = False            # the speak-NOW watchdog push was already sent
+        self._reply_nudged = False               # missed-reply rescue sent for the current unanswered spell
         # Noise squelch (EO_NOISE_GATE, default OFF): frames below the gate are replaced by
         # digital silence before Gemini hears them — NEVER dropped (the server VAD must
         # still hear ~silence_duration_ms of quiet to close a turn; a gap just stalls it).
@@ -472,6 +473,7 @@ class PlivoMediaBridge:
         # NOTE: _silence_nudged is deliberately NOT reset here — the nudge's own audio
         # would clear it and the agent would re-ask forever instead of escalating.
         # Only VOICED CALLER audio clears it (see handle_plivo_messages).
+        self._reply_nudged = False               # the agent IS replying — re-arm the missed-reply rescue
         self._spoke_since_user = True            # a genuine agent frame is going out this "since-caller" window
         try:
             self._residual.extend(pcm24k_to_mulaw(data))
@@ -823,6 +825,7 @@ class PlivoMediaBridge:
         nudge_max = int(_cfg("EO_SILENCE_NUDGE_MAX", 2))
         nudge_cooldown = _cfg("EO_SILENCE_NUDGE_COOLDOWN_S", 15.0)
         greet_nudge_s = _cfg("EO_GREETING_NUDGE_SECONDS", 4.0)
+        reply_rescue_s = _cfg("EO_UNANSWERED_REPLY_SECONDS", 4.0)
         try:
             while True:
                 await asyncio.sleep(1.0)
@@ -858,6 +861,21 @@ class PlivoMediaBridge:
                     continue
                 if nudge_on and not self._rsvp_recorded and self._agent_audio_started \
                         and not self._ending and agent_quiet:
+                    # Missed-reply rescue: the caller SPOKE after the agent's last audio and
+                    # got nothing back for a few seconds — Gemini sometimes fails to register
+                    # the first reply after the greeting as a turn (it may even transcribe it
+                    # and stay mute). The still-there ladder can't help here: it measures
+                    # SILENCE, and a talking caller keeps resetting it.
+                    if (not self._reply_nudged
+                            and self._last_caller_audio > self._last_agent_audio
+                            and now - self._last_caller_audio >= reply_rescue_s):
+                        self._reply_nudged = True
+                        logger.info(f"Caller spoke {now - self._last_caller_audio:.0f}s ago with no "
+                                    f"reply; prompting the agent")
+                        await self.text_input_queue.put(
+                            "[The member just said something and is waiting. If you caught it, "
+                            "reply NOW; if you did not catch it, politely ask them to repeat.]")
+                        continue
                     quiet_for = now - max(self._last_caller_audio, self._last_agent_audio,
                                           self._last_activity)
                     if (not self._silence_nudged and quiet_for >= nudge_x

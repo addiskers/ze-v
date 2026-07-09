@@ -279,6 +279,59 @@ def test_greeting_watchdog_never_fires_after_audio_started(monkeypatch):
     assert asyncio.run(run()) == []
 
 
+def test_missed_reply_rescue_fires_when_caller_speech_goes_unanswered(monkeypatch):
+    """Caller spoke AFTER the agent's last audio and got nothing for 4s → prompt the
+    agent once. The still-there ladder can't cover this (it measures silence, and a
+    talking caller keeps resetting it)."""
+    monkeypatch.setenv("EO_SILENCE_CHECK", "true")
+    monkeypatch.setenv("EO_UNANSWERED_REPLY_SECONDS", "0.3")
+
+    async def run():
+        b = _bridge()
+        b._agent_audio_started = True
+        t = time.monotonic()
+        b._last_agent_audio = t - 10              # greeting ended long ago
+        b._last_caller_audio = t - 5              # caller replied 5s ago...
+        b._last_activity = t - 5                  # ...and nothing since
+        task = asyncio.create_task(b._idle_hangup_guard())
+        await asyncio.sleep(2.3)                  # two+ ticks: must fire exactly once
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if b._pending_hangup_task:
+            b._pending_hangup_task.cancel()
+        msgs = []
+        while not b.text_input_queue.empty():
+            msgs.append(b.text_input_queue.get_nowait())
+        return [m for m in msgs if "said something" in m]
+
+    assert len(asyncio.run(run())) == 1
+
+
+def test_missed_reply_rescue_stays_quiet_when_agent_already_replied(monkeypatch):
+    monkeypatch.setenv("EO_SILENCE_CHECK", "true")
+    monkeypatch.setenv("EO_UNANSWERED_REPLY_SECONDS", "0.3")
+
+    async def run():
+        b = _bridge()
+        b._agent_audio_started = True
+        t = time.monotonic()
+        b._last_caller_audio = t - 5
+        b._last_agent_audio = t - 2               # agent DID reply after the caller
+        b._last_activity = t - 2
+        task = asyncio.create_task(b._idle_hangup_guard())
+        await asyncio.sleep(1.2)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if b._pending_hangup_task:
+            b._pending_hangup_task.cancel()
+        msgs = []
+        while not b.text_input_queue.empty():
+            msgs.append(b.text_input_queue.get_nowait())
+        return [m for m in msgs if "said something" in m]
+
+    assert asyncio.run(run()) == []
+
+
 def test_silence_nudge_fires_even_when_turn_open_flag_is_stuck(monkeypatch):
     """Gemini may never send turn_complete for a text-triggered greeting when the
     caller's speech doesn't register as a turn — the stuck _turn_open flag must not

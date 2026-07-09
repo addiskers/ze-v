@@ -117,7 +117,12 @@ async def _reap_calling(campaign, now):
                     eo_db.cc_update(cc["id"], rsvp_outcome="voicemail", last_call_id=rec.get("id"))
                     _apply_failure(cc, campaign, now, error="voicemail")
                 else:
-                    eo_db.cc_update(cc["id"], call_status="done", rsvp_outcome=outcome, last_call_id=rec.get("id"))
+                    fields = dict(call_status="done", rsvp_outcome=outcome, last_call_id=rec.get("id"))
+                    # the agent's note rides onto the contact's Remark — never over a human edit
+                    note = (rec.get("remark") or rec.get("rsvp_note") or "").strip()
+                    if note and not (cc.get("remark") or "").strip():
+                        fields["remark"] = note
+                    eo_db.cc_update(cc["id"], **fields)
             # else: still on the call — leave it as 'calling'
         elif (now - last).total_seconds() > ring_window:
             _apply_failure(cc, campaign, now, error="no answer")

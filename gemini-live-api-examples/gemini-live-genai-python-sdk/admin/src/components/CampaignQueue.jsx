@@ -35,6 +35,12 @@ export default function CampaignQueue({ title = 'Callback attempts', desc = '', 
     catch (e) { setErr(e.message) }
   }
 
+  async function cancelRetry(c) {
+    if (!window.confirm(`Cancel the pending retry for ${c.name || c.phone}?\n\nNo more automatic calls will be made.`)) return
+    try { await api.post(`/campaigns/${c.campaign_id}/contacts/${c.id}/cancel`); load() }
+    catch (e) { setErr(e.message) }
+  }
+
   // When this contact rings next: in-flight rows say so; otherwise next_attempt_at,
   // then a scheduled campaign's start time, then a dash.
   function nextDueCell(c) {
@@ -90,10 +96,12 @@ export default function CampaignQueue({ title = 'Callback attempts', desc = '', 
                 <td>
                   <RemarkCell value={c.remark} onSave={(v) => api.patch(`/campaigns/${c.campaign_id}/contacts/${c.id}/remark`, { remark: v })} />
                 </td>
-                <td>
-                  {['pending', 'failed', 'no_answer'].includes(c.call_status)
+                <td style={{ display: 'flex', gap: 6 }}>
+                  {['pending', 'failed', 'no_answer', 'cancelled'].includes(c.call_status)
                     ? <button className="btn sm" onClick={() => callNow(c)}>Call now</button>
                     : <span className="muted">—</span>}
+                  {c.call_status === 'pending' &&
+                    <button className="btn ghost sm" onClick={() => cancelRetry(c)}>Cancel</button>}
                 </td>
               </tr>
             ))}

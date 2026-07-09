@@ -210,7 +210,9 @@ class CallRecorder:
             if cid and caller:
                 try:
                     import eo_db
-                    eo_db.cc_set_outcome_by_phone(int(cid), caller, outcome)
+                    eo_db.cc_set_outcome_by_phone(
+                        int(cid), caller, outcome,
+                        remark=(self.call.get("remark") or self.call.get("rsvp_note") or None))
                 except Exception as e:
                     logger.warning(f"back-prop: campaign contact update failed: {e}")
         except Exception as e:
@@ -263,6 +265,11 @@ class CallRecorder:
             self.call["rsvp_do_not_contact"] = bool(result.get("do_not_contact"))
             self.call["rsvp_accompanying_children"] = result.get("accompanying_children", "") or ""
             self.call["rsvp_note"] = result.get("note", "") or ""
+            # The agent's note IS the call's Remark (client decision): auto-filled here,
+            # editable later in the admin (remark PATCH is blocked while in_progress, so
+            # this can never clobber a human edit).
+            if self.call["rsvp_note"]:
+                self.call["remark"] = self.call["rsvp_note"]
             if result.get("guest_name"):
                 self.call["rsvp_guest_name"] = result.get("guest_name")
             if status == "callback":

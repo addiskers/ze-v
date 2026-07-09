@@ -72,7 +72,7 @@ def _run_backprop(monkeypatch, outcome):
     monkeypatch.setattr(store, "load_call", fake_load)
     monkeypatch.setattr(store, "save_call", fake_save)
     monkeypatch.setattr(eo_db, "cc_set_outcome_by_phone",
-                        lambda cid, phone, oc: cc_calls.append((cid, phone, oc)))
+                        lambda cid, phone, oc, **kw: cc_calls.append((cid, phone, oc)))
 
     r = _rec_with_call(origin_call_id="origin1", campaign_id=5,
                        rsvp_outcome_status=outcome)

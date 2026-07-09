@@ -117,7 +117,9 @@ export default function Callbacks({ title = 'Callbacks', desc = '', canToggle = 
                       if (window.confirm(`Call ${who} NOW instead of waiting for ${when}?\n\n"Call now" dials immediately and ignores the scheduled callback time.`)) act(id, 'call-now')
                     }}>Call now</button>
                     <button className="btn ghost sm" disabled={done} onClick={() => { setReschErr(''); setResch({ id, date: todayStr(), time: nowTimeStr() }) }}>Reschedule</button>
-                    <button className="btn ghost sm" disabled={cb.status === 'cancelled'} onClick={() => act(id, 'cancel')}>Cancel</button>
+                    <button className="btn ghost sm" disabled={cb.status !== 'pending'}
+                      title={cb.status !== 'pending' ? 'Only a pending callback can be cancelled' : undefined}
+                      onClick={() => act(id, 'cancel')}>Cancel</button>
                   </td>
                 </tr>
               )

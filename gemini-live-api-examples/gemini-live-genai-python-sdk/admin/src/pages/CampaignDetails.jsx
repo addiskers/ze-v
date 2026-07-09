@@ -4,6 +4,7 @@ import { api } from '../api.js'
 import CallLogs, { fmtDate } from '../components/CallLogs.jsx'
 import CampaignRecipients from '../components/CampaignRecipients.jsx'
 import PageHeader from '../components/PageHeader.jsx'
+import { minToHHMM } from './MyCampaigns.jsx'
 
 export default function CampaignDetails() {
   const { id } = useParams()
@@ -29,6 +30,7 @@ export default function CampaignDetails() {
     ['Calling', p.calling || 0],
     ['Done', p.done || 0],
     ['Failed', p.failed || 0],
+    ['Cancelled', p.cancelled || 0],
     ['No answer', p.no_answer || 0],
   ]
 
@@ -57,6 +59,14 @@ export default function CampaignDetails() {
               <div className="value" style={{ fontSize: '1.35rem' }}>{val}</div>
             </div>
           ))}
+        </div>
+      )}
+
+      {c && (
+        <div className="muted" style={{ fontSize: '0.8rem' }}>
+          Calling hours {minToHHMM(c.call_start_min ?? 540)}–{minToHHMM(c.call_end_min ?? 1260)}
+          {' · '}Retries: up to {c.callback_max_per_day || 3}/day for {c.callback_days || 1} day{(c.callback_days || 1) > 1 ? 's' : ''}, every {c.callback_delay_hours ?? 4}h
+          {' · '}Created {fmtDate(c.created_at)}
         </div>
       )}
 

@@ -7,6 +7,12 @@ import PageHeader from '../components/PageHeader.jsx'
 
 const PAGE = 25
 
+// minutes-since-midnight (IST) -> "09:00"
+export const minToHHMM = (m) => {
+  const v = Number.isFinite(Number(m)) ? Number(m) : 0
+  return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`
+}
+
 export default function MyCampaigns() {
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
@@ -69,15 +75,17 @@ export default function MyCampaigns() {
                 {th('start_at', 'Start Date')}
                 {th('status', 'Status')}
                 {th('contact_count', 'Contacts', 'num')}
+                <th className="no-sort">Calling Hours</th>
+                <th className="no-sort">Retries</th>
                 {th('created_at', 'Created At')}
                 <th className="no-sort">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="empty">Loading…</td></tr>
+                <tr><td colSpan={8} className="empty">Loading…</td></tr>
               ) : items.length === 0 ? (
-                <tr><td colSpan={6} className="empty">No campaigns yet. Create one to get started.</td></tr>
+                <tr><td colSpan={8} className="empty">No campaigns yet. Create one to get started.</td></tr>
               ) : items.map((c) => {
                 const done = (c.progress?.done || 0) + (c.progress?.failed || 0)
                 return (
@@ -94,6 +102,8 @@ export default function MyCampaigns() {
                       {c.contact_count > 0 && (c.status === 'live' || c.status === 'completed') &&
                         <span className="muted" style={{ fontSize: '0.72rem' }}> ({done} done)</span>}
                     </td>
+                    <td>{minToHHMM(c.call_start_min ?? 540)}–{minToHHMM(c.call_end_min ?? 1260)}</td>
+                    <td style={{ fontSize: '0.78rem' }}>{`${c.callback_max_per_day || 3}/day × ${c.callback_days || 1}d · every ${c.callback_delay_hours ?? 4}h`}</td>
                     <td>{fmtDate(c.created_at)}</td>
                     <td>
                       {(c.status === 'scheduled' || c.status === 'live')

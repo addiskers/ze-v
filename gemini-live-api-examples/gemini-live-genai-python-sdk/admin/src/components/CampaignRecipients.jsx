@@ -32,6 +32,12 @@ export default function CampaignRecipients({ campaignId }) {
     catch (e) { alert(e.message) }
   }
 
+  async function cancelRetry(cc) {
+    if (!window.confirm(`Cancel the pending retry for ${cc.name || cc.phone}?\n\nNo more automatic calls will be made.`)) return
+    try { await api.post(`/campaigns/${campaignId}/contacts/${cc.id}/cancel`); load() }
+    catch (e) { alert(e.message) }
+  }
+
   // Open this recipient's most-recent call in THIS campaign (caller search + campaign scope).
   async function openCall(cc) {
     setNote('')
@@ -104,10 +110,12 @@ export default function CampaignRecipients({ campaignId }) {
                   <td onClick={(e) => e.stopPropagation()}>
                     <RemarkCell value={c.remark} onSave={(v) => api.patch(`/campaigns/${campaignId}/contacts/${c.id}/remark`, { remark: v })} />
                   </td>
-                  <td onClick={(e) => e.stopPropagation()}>
-                    {['pending', 'failed', 'no_answer'].includes(c.call_status)
+                  <td onClick={(e) => e.stopPropagation()} style={{ display: 'flex', gap: 6 }}>
+                    {['pending', 'failed', 'no_answer', 'cancelled'].includes(c.call_status)
                       ? <button className="btn sm" onClick={() => callNow(c)}>Call now</button>
                       : <span className="muted">—</span>}
+                    {c.call_status === 'pending' &&
+                      <button className="btn ghost sm" onClick={() => cancelRetry(c)}>Cancel</button>}
                   </td>
                 </tr>
               )

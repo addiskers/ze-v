@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS campaign_contacts (
     contact_id      INTEGER,
     phone           TEXT NOT NULL,
     name            TEXT,
-    call_status     TEXT NOT NULL DEFAULT 'pending',  -- pending|calling|done|failed|no_answer
+    call_status     TEXT NOT NULL DEFAULT 'pending',  -- pending|calling|done|failed|cancelled (no_answer: legacy, unused)
     attempts        INTEGER NOT NULL DEFAULT 0,
     day_attempts    INTEGER NOT NULL DEFAULT 0,
     day_key         TEXT,                              -- YYYY-MM-DD of last day_attempts window
@@ -556,20 +556,30 @@ def cc_update(cc_id: int, **fields) -> None:
     _exec(f"UPDATE campaign_contacts SET {cols} WHERE id = ?", tuple(fields.values()) + (int(cc_id),))
 
 
-def cc_set_outcome_by_phone(campaign_id: int, phone: str, outcome: str) -> int:
+def cc_set_outcome_by_phone(campaign_id: int, phone: str, outcome: str,
+                            mark_done: bool = False, remark=None) -> int:
     """Overwrite rsvp_outcome for the most-recent campaign_contacts row matching
-    (campaign_id, phone). Used to back-propagate a callback-RESULT outcome onto an already
-    'done' contact. Leaves call_status as-is. Returns rowcount (0 if no match)."""
+    (campaign_id, phone). Used by callback-result back-propagation and by manual RSVP
+    edits. mark_done=True also finalises the contact (call_status='done', retries
+    stopped) — used when an admin sets a FINAL outcome by hand. `remark` fills the
+    contact's remark ONLY when it is empty (a human edit is never overwritten).
+    Returns rowcount (0 if no match)."""
     conn = get_conn()
     with _lock:
         row = conn.execute(
-            "SELECT id FROM campaign_contacts WHERE campaign_id = ? AND phone = ? "
+            "SELECT id, remark FROM campaign_contacts WHERE campaign_id = ? AND phone = ? "
             "ORDER BY id DESC LIMIT 1", (int(campaign_id), phone)).fetchone()
         if not row:
             return 0
+        sets, params = ["rsvp_outcome = ?", "updated_at = ?"], [outcome, _now()]
+        if mark_done:
+            sets += ["call_status = 'done'", "next_attempt_at = NULL"]
+        if remark and not (row["remark"] or "").strip():
+            sets.append("remark = ?")
+            params.append(str(remark))
         cur = conn.execute(
-            "UPDATE campaign_contacts SET rsvp_outcome = ?, updated_at = ? WHERE id = ?",
-            (outcome, _now(), int(row["id"])))
+            f"UPDATE campaign_contacts SET {', '.join(sets)} WHERE id = ?",
+            tuple(params) + (int(row["id"]),))
         conn.commit()
         return cur.rowcount
 

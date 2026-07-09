@@ -183,6 +183,8 @@ def _contact_display(cc, campaign=None, scheduler_on=True, now=None, now_min=Non
     outcome = cc.get("rsvp_outcome")
     if st == "calling":
         return ("In progress", "blue")
+    if st == "cancelled":
+        return ("Cancelled", "red")
     if st == "failed":
         return ("Unreachable — max attempts", "red")
     if st == "done":
@@ -573,6 +575,26 @@ async def campaign_contact_retry(campaign_id: int, cc_id: int, request: Request)
     return {"ok": True}
 
 
+@router.post("/campaigns/{campaign_id}/contacts/{cc_id}/cancel")
+async def campaign_contact_cancel(campaign_id: int, cc_id: int, request: Request):
+    """Cancel a PENDING retry for this recipient — no more automatic dials. History
+    (done/failed) and in-progress calls are untouchable; Call now can revive a
+    cancelled contact deliberately."""
+    user = eo_auth.require_eo(request)
+    if not _owns_or_admin(user, eo_db.get_campaign(campaign_id)):
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    cc = eo_db.get_campaign_contact(cc_id)
+    if not cc or int(cc.get("campaign_id") or 0) != int(campaign_id):
+        raise HTTPException(status_code=404, detail="Recipient not found")
+    st = cc.get("call_status")
+    if st == "calling":
+        raise HTTPException(status_code=409, detail="A call to this recipient is in progress")
+    if st != "pending":
+        raise HTTPException(status_code=400, detail="Nothing to cancel — this recipient has no pending retry")
+    eo_db.cc_update(int(cc_id), call_status="cancelled", next_attempt_at=None)
+    return {"ok": True}
+
+
 # ── contacts pool (per-user: an Admin sees ONLY their own; Superadmin sees all) ─
 def _contact_owner_scope(user):
     """None → all pools (Superadmin); otherwise the caller's own pool."""
@@ -662,6 +684,9 @@ async def eo_callbacks(request: Request):
     items = _label_and_strip(items, include_cost)
     for c in items:
         cb = c.get("callback") or {}
+        # the callback row inherits the CALL's remark (= the agent's note) until someone
+        # writes a callback-specific remark
+        c["callback"] = {**cb, "remark": cb.get("remark") or c.get("remark") or None}
         label, variant = _CALLBACK_LABELS.get(cb.get("status"), (cb.get("status") or "—", "amber"))
         c["display_status"] = label
         c["display_variant"] = variant
@@ -688,6 +713,12 @@ async def _owned_callback(user, call_id):
 async def eo_callback_cancel(call_id: str, request: Request):
     user = eo_auth.require_eo(request)
     call = await _owned_callback(user, call_id)
+    st = call["callback"].get("status")
+    if st == "in_flight":
+        raise HTTPException(status_code=409, detail="This callback is being dialed right now")
+    if st != "pending":
+        # completed / failed / cancelled are HISTORY — never rewrite what already happened
+        raise HTTPException(status_code=400, detail="This callback already finished — history can't be cancelled")
     call["callback"]["status"] = "cancelled"
     await store.save_call(call)
     return {"ok": True}
@@ -724,6 +755,56 @@ async def eo_callback_reschedule(call_id: str, request: Request):
                "next_retry_at": None, "last_error": None})
     await store.save_call(call)
     return {"ok": True}
+
+
+# ── manual RSVP overwrite ────────────────────────────────────────────────────
+_FINAL_OUTCOMES = ("yes", "no", "do_not_contact", "wrong_number")
+
+
+def _apply_manual_outcome(call: dict, outcome: str, username: str) -> dict:
+    """Overwrite a call's system-captured RSVP with a human decision. Mutates the dict
+    (caller persists it). Keeps the original outcome once for audit, keeps the
+    dashboards honest (booking_created), and cancels a pending member-callback when
+    the outcome moves away from 'callback'."""
+    prev = call.get("rsvp_outcome_status")
+    if prev and "rsvp_outcome_original" not in call:
+        call["rsvp_outcome_original"] = prev
+    call["rsvp_outcome_status"] = outcome
+    call["booking_created"] = outcome == "yes"
+    call["rsvp_source"] = "manual"
+    call["rsvp_edited_by"] = username or ""
+    call["rsvp_edited_at"] = datetime.now(timezone.utc).isoformat()
+    cb = call.get("callback")
+    if cb and cb.get("status") == "pending" and outcome != "callback":
+        cb["status"] = "cancelled"
+    return call
+
+
+@router.patch("/calls/{call_id}/outcome")
+async def eo_call_outcome(call_id: str, request: Request):
+    """Let a user overwrite the system-captured RSVP. Final outcomes also finalise the
+    campaign contact (stops pending retries)."""
+    user = eo_auth.require_eo(request)
+    call = await store.load_call(call_id)
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    scope = _scope_ids(user)
+    if scope is not None and str(call.get("campaign_id") or "") not in scope:
+        raise HTTPException(status_code=404, detail="Call not found")
+    if call.get("status") == "in_progress":
+        raise HTTPException(status_code=409, detail="Call is still in progress — edit the RSVP once it ends")
+    body = await request.json()
+    outcome = str((body or {}).get("outcome") or "").strip().lower()
+    if outcome not in _RSVP_LABELS:
+        raise HTTPException(status_code=400, detail="Pick a valid RSVP outcome")
+    _apply_manual_outcome(call, outcome, user.get("username") or "")
+    await store.save_call(call)
+    cid, caller = call.get("campaign_id"), (call.get("caller") or "").strip()
+    if cid and caller:
+        eo_db.cc_set_outcome_by_phone(int(cid), caller, outcome,
+                                      mark_done=outcome in _FINAL_OUTCOMES)
+    return {"ok": True, "outcome": outcome, "label": _rsvp_label(outcome),
+            "edited_by": call["rsvp_edited_by"]}
 
 
 # ── remarks (user-editable note on every grid row) ───────────────────────────

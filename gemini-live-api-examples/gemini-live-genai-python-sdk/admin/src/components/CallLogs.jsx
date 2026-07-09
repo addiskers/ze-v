@@ -25,6 +25,60 @@ export function fmtCost(v) {
   return Number.isFinite(n) ? `$${n.toFixed(4)}` : '—'
 }
 
+const RSVP_OUTCOMES = [
+  ['yes', 'Attending'], ['no', 'Declined'], ['callback', 'Callback requested'],
+  ['voicemail', 'Voicemail'], ['do_not_contact', 'Do not contact'], ['wrong_number', 'Wrong number'],
+]
+
+// Editable RSVP: shows the captured outcome; Edit → select + Save overwrites it
+// (PATCH /calls/{id}/outcome). Locked while the call is in progress.
+function RsvpEditor({ call }) {
+  const [editing, setEditing] = useState(false)
+  const [val, setVal] = useState(call.rsvp_outcome_status || '')
+  const [label, setLabel] = useState(
+    call.rsvp_outcome_label || call.rsvp_outcome_status || (call.booking_created ? 'yes' : '—'))
+  const [editedBy, setEditedBy] = useState(call.rsvp_source === 'manual' ? call.rsvp_edited_by : null)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const locked = call.status === 'in_progress'
+
+  async function save() {
+    if (!val) { setEditing(false); return }
+    setBusy(true); setErr('')
+    try {
+      const r = await api.patch(`/calls/${encodeURIComponent(call.id || call.call_sid)}/outcome`, { outcome: val })
+      setLabel(r.label || val)
+      setEditedBy(r.edited_by || 'you')
+      setEditing(false)
+    } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+
+  if (editing) {
+    return (
+      <div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <select value={val} onChange={(e) => setVal(e.target.value)}>
+            <option value="" disabled>Pick outcome…</option>
+            {RSVP_OUTCOMES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+          <button className="btn sm" disabled={busy} onClick={save}>{busy ? '…' : 'Save'}</button>
+          <button className="btn ghost sm" disabled={busy} onClick={() => { setEditing(false); setErr('') }}>Cancel</button>
+        </div>
+        {err && <div style={{ color: '#fca5a5', fontSize: '0.72rem', marginTop: 4 }}>{err}</div>}
+      </div>
+    )
+  }
+  return (
+    <div>
+      <span>{label}</span>
+      <button className="btn ghost sm" style={{ marginLeft: 8 }} disabled={locked}
+        title={locked ? 'Available once the call ends' : 'Overwrite the captured RSVP'}
+        onClick={() => setEditing(true)}>Edit</button>
+      {editedBy && <div className="muted" style={{ fontSize: '0.7rem', marginTop: 2 }}>edited by {editedBy}</div>}
+    </div>
+  )
+}
+
 function StatusPill({ call }) {
   const s = (call.status || call.rsvp_outcome_status || '').toLowerCase()
   const cls = s.includes('complete') || call.booking_created ? 'green'
@@ -219,13 +273,7 @@ export function CallDrawer({ call, onClose }) {
         <div className="sub">{fmtDate(call.started_at)} · {call.source} · {fmtDur(call.duration_seconds)}</div>
         <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: 14 }}>
           <div><label>Status</label><StatusPill call={call} /></div>
-          <div><label>RSVP</label>{call.rsvp_outcome_label || call.rsvp_outcome_status || (call.booking_created ? 'yes' : '—')}</div>
-          {call.rsvp_note && (
-            <div style={{ gridColumn: '1 / -1' }}>
-              <label>Agent note</label>
-              <span className="muted" style={{ fontSize: '0.82rem' }}>{call.rsvp_note}</span>
-            </div>
-          )}
+          <div><label>RSVP</label><RsvpEditor key={call.id || call.call_sid} call={call} /></div>
           {call.campaign_name && <div><label>Campaign</label>{call.campaign_name}</div>}
           {call.language && <div><label>Language</label>{call.language}</div>}
           <div style={{ gridColumn: '1 / -1' }}>

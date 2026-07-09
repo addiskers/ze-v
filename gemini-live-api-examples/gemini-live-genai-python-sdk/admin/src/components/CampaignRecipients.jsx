@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, qs } from '../api.js'
 import { fmtDate, CallDrawer } from './CallLogs.jsx'
+import RemarkCell from './RemarkCell.jsx'
+import { IconSearch } from './icons.jsx'
 
 // The campaign's recipient roster: who is in the campaign and each one's dial state
 // (with last_error surfaced). Click a recipient that has been attempted to open its call
@@ -12,16 +14,17 @@ export default function CampaignRecipients({ campaignId }) {
   const [err, setErr] = useState('')
   const [detail, setDetail] = useState(null)
   const [note, setNote] = useState('')
+  const [q, setQ] = useState('')
 
   const load = useCallback(() => {
     setLoading(true)
-    api.get(`/campaigns/${campaignId}/contacts`)
+    api.get(`/campaigns/${campaignId}/contacts${qs({ q: q || undefined })}`)
       .then((d) => { setItems(d.items || []); setTotal(d.total || 0); setErr('') })
       .catch((e) => setErr(e.message))
       .finally(() => setLoading(false))
-  }, [campaignId])
+  }, [campaignId, q])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { const t = setTimeout(load, q ? 250 : 0); return () => clearTimeout(t) }, [load, q])
 
   async function callNow(cc) {
     if (!window.confirm(`Call ${cc.name || cc.phone} now?`)) return
@@ -49,7 +52,13 @@ export default function CampaignRecipients({ campaignId }) {
     <div className="panel">
       <div className="panel-head">
         <h3>Recipients</h3>
-        <button className="btn ghost sm" onClick={load}>Refresh</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div className="search">
+            <span className="ic"><IconSearch /></span>
+            <input placeholder="Search name / phone…" value={q} onChange={(e) => setQ(e.target.value)} />
+          </div>
+          <button className="btn ghost sm" onClick={load}>Refresh</button>
+        </div>
       </div>
       {err && <div style={{ color: '#fca5a5', fontSize: '0.82rem', marginBottom: 10 }}>{err}</div>}
       {note && <div className="muted" style={{ fontSize: '0.8rem', marginBottom: 10 }}>{note}</div>}
@@ -59,11 +68,11 @@ export default function CampaignRecipients({ campaignId }) {
             <tr>
               <th className="no-sort">Name</th>
               <th className="no-sort">Phone Number</th>
-              <th className="no-sort">Status</th>
-              <th className="no-sort num">Attempts</th>
               <th className="no-sort">Last Attempt</th>
-              <th className="no-sort">Next Attempt</th>
-              <th className="no-sort">Last Error</th>
+              <th className="no-sort">Next Call Due</th>
+              <th className="no-sort num">Attempts</th>
+              <th className="no-sort">Status</th>
+              <th className="no-sort">Remark</th>
               <th className="no-sort">Action</th>
             </tr>
           </thead>
@@ -71,7 +80,7 @@ export default function CampaignRecipients({ campaignId }) {
             {loading ? (
               <tr><td colSpan={8} className="empty">Loading…</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={8} className="empty">No recipients.</td></tr>
+              <tr><td colSpan={8} className="empty">{q ? 'No recipients match your search.' : 'No recipients.'}</td></tr>
             ) : items.map((c) => {
               const clickable = (c.attempts || 0) > 0
               return (
@@ -80,16 +89,20 @@ export default function CampaignRecipients({ campaignId }) {
                     title={clickable ? 'View this recipient’s call' : ''}>
                   <td>{c.name || <span className="muted">—</span>}</td>
                   <td style={{ fontFamily: 'var(--mono)' }}>{c.phone}</td>
-                  <td><span className={`pill ${c.call_status}`}>{c.call_status}</span></td>
-                  <td className="num">{c.attempts}</td>
                   <td>{c.last_attempt_at ? fmtDate(c.last_attempt_at) : <span className="muted">—</span>}</td>
                   <td>
                     {c.call_status === 'pending'
                       ? (c.next_attempt_at ? fmtDate(c.next_attempt_at) : <span className="muted">Queued</span>)
                       : <span className="muted">—</span>}
                   </td>
-                  <td style={{ maxWidth: 260, color: c.last_error ? '#fca5a5' : 'var(--muted)', fontSize: '0.78rem' }}>
-                    {c.last_error || '—'}
+                  <td className="num">{c.attempts}</td>
+                  <td>
+                    <span className={`pill ${c.display_variant || 'amber'}`} title={c.last_error || undefined}>
+                      {c.display_status || c.call_status}
+                    </span>
+                  </td>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <RemarkCell value={c.remark} onSave={(v) => api.patch(`/campaigns/${campaignId}/contacts/${c.id}/remark`, { remark: v })} />
                   </td>
                   <td onClick={(e) => e.stopPropagation()}>
                     {['pending', 'failed', 'no_answer'].includes(c.call_status)

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
+import callbacks
 import eo_auth
 import eo_db
 import eo_import
@@ -81,6 +82,14 @@ def _campaign_since(filters: dict) -> dict:
     return filters
 
 
+def _with_name_search(filters: dict) -> dict:
+    """Call records store only the phone, so a name search resolves to phones first:
+    any caller whose contact name (pool or campaign recipient) matches `q` also hits."""
+    if filters.get("q"):
+        filters["q_phones"] = eo_db.phones_by_name_query(filters["q"])
+    return filters
+
+
 def _label_and_strip(items: list[dict], include_cost: bool = False) -> list[dict]:
     """Attach campaign_name + contact_name; strip cost fields unless include_cost (eo_admin).
     Call records store only the phone (`caller`), so the person's name is resolved by phone —
@@ -97,6 +106,7 @@ def _label_and_strip(items: list[dict], include_cost: bool = False) -> list[dict
         c["contact_name"] = ((cc_names.get((int(cid), str(phone))) if cid and phone else None)
                              or (phone_names.get(str(phone)) if phone else None) or "")
         c["has_recording"] = store.has_recording(c.get("call_sid"))
+        c["rsvp_outcome_label"] = _rsvp_label(c.get("rsvp_outcome_status"))
         out.append(c)
     return out
 
@@ -137,6 +147,97 @@ def _scope_ids(user):
 
 def _owns_or_admin(user, campaign) -> bool:
     return bool(campaign) and (user["role"] == "eo_admin" or campaign.get("created_by") == user["id"])
+
+
+# ── display statuses (labels ONLY — raw enums stay for logic/actions) ─────────
+# variant maps to the SPA pill palette: green | blue | amber | red
+_RSVP_LABELS = {
+    "yes": ("Attending", "green"),
+    "no": ("Declined", "red"),
+    "callback": ("Callback requested", "amber"),
+    "voicemail": ("Voicemail", "amber"),
+    "do_not_contact": ("Do not contact", "red"),
+    "wrong_number": ("Wrong number", "red"),
+}
+_CALLBACK_LABELS = {
+    "pending": ("Scheduled", "amber"),
+    "in_flight": ("Dialing", "blue"),
+    "completed": ("Called back", "green"),
+    "failed": ("Failed", "red"),
+    "cancelled": ("Cancelled", "red"),
+}
+
+
+def _rsvp_label(value):
+    """Display label for an rsvp outcome; unknown values pass through raw."""
+    if value in _RSVP_LABELS:
+        return _RSVP_LABELS[value][0]
+    return value or None
+
+
+def _contact_display(cc, campaign=None, scheduler_on=True, now=None, now_min=None):
+    """Human status for a campaign_contacts row: (display_status, display_variant).
+    Explains WHY a past-due retry isn't dialing (campaign not live / scheduler off /
+    outside calling hours) instead of showing a stale 'Pending'."""
+    st = cc.get("call_status")
+    outcome = cc.get("rsvp_outcome")
+    if st == "calling":
+        return ("In progress", "blue")
+    if st == "failed":
+        return ("Unreachable — max attempts", "red")
+    if st == "done":
+        if outcome in _RSVP_LABELS:
+            return _RSVP_LABELS[outcome]
+        if outcome:
+            return (str(outcome), "green")
+        return ("Answered — no RSVP captured", "amber")
+    # pending (and the legacy, never-written 'no_answer')
+    if int(cc.get("attempts") or 0) == 0:
+        return ("Queued", "amber")
+    # typed source of truth first (the reap stores rsvp_outcome='voicemail'); the
+    # last_error text is only a fallback for rows written before that existed
+    reason = ("voicemail" if outcome == "voicemail"
+              or "voicemail" in (cc.get("last_error") or "").lower() else "no answer")
+    nxt = _parse_iso(cc.get("next_attempt_at"))
+    if nxt and nxt > (now or datetime.now(timezone.utc)):
+        return (f"Retry scheduled — {reason}", "amber")
+    # past due: explain what's holding the dial
+    if campaign and campaign.get("status") != "live":
+        return ("Waiting — campaign not active", "amber")
+    if not scheduler_on:
+        return ("Waiting — scheduler off", "amber")
+    if campaign is not None:
+        try:
+            start_min, end_min = callbacks.campaign_window(campaign)
+            if not callbacks.in_call_window(start_min, end_min, now_min=now_min):
+                return ("Waiting for calling hours", "amber")
+        except Exception:
+            pass
+    return (f"Due now — {reason}", "amber")
+
+
+def _attach_contact_display(items, campaign=None, scheduler_on=True):
+    now = datetime.now(timezone.utc)            # per-request constants, not per-row
+    now_min = callbacks.now_ist_min()
+    for cc in items:
+        camp = campaign
+        if camp is None and cc.get("campaign_status") is not None:
+            # queue rows carry their campaign fields inline (cc_upcoming join)
+            camp = {"status": cc.get("campaign_status"),
+                    "call_start_min": cc.get("campaign_call_start_min"),
+                    "call_end_min": cc.get("campaign_call_end_min")}
+        label, variant = _contact_display(cc, camp, scheduler_on, now=now, now_min=now_min)
+        cc["display_status"] = label
+        cc["display_variant"] = variant
+        cc["rsvp_outcome_label"] = _rsvp_label(cc.get("rsvp_outcome"))
+    return items
+
+
+def _clean_remark(body) -> str:
+    remark = str((body or {}).get("remark") or "").strip()
+    if len(remark) > 500:
+        raise HTTPException(status_code=400, detail="Remark is too long (max 500 characters)")
+    return remark
 
 
 # ── auth ─────────────────────────────────────────────────────────────────────
@@ -228,7 +329,7 @@ async def eo_summary(request: Request):
 async def eo_calls(request: Request):
     user = eo_auth.require_eo(request)
     include_cost = user["role"] == "eo_admin"
-    filters = _campaign_since(_filters_from_request(request))
+    filters = _with_name_search(_campaign_since(_filters_from_request(request)))
     scope = _scope_ids(user)
     if scope is not None:
         filters["campaign_ids"] = scope
@@ -243,7 +344,7 @@ async def eo_calls(request: Request):
 async def eo_calls_csv(request: Request):
     user = eo_auth.require_eo(request)
     include_cost = user["role"] == "eo_admin"
-    filters = _campaign_since(_filters_from_request(request))
+    filters = _with_name_search(_campaign_since(_filters_from_request(request)))
     scope = _scope_ids(user)
     if scope is not None:
         filters["campaign_ids"] = scope
@@ -251,9 +352,9 @@ async def eo_calls_csv(request: Request):
     data = await store.list_calls(filters)
     items = _label_and_strip(data["items"], include_cost)
     buf = io.StringIO()
-    # Exactly: caller name, phone, date/time, status, RSVP, duration (everything else is on the grid).
-    cols = ["contact_name", "caller", "started_at", "status", "rsvp_outcome_status", "duration_seconds"]
-    headers = ["Name", "Phone", "Date/Time", "Status", "RSVP", "Duration (s)"]
+    # Exactly: caller name, phone, date/time, status, RSVP, duration, remark (everything else is on the grid).
+    cols = ["contact_name", "caller", "started_at", "status", "rsvp_outcome_status", "duration_seconds", "remark"]
+    headers = ["Name", "Phone", "Date/Time", "Status", "RSVP", "Duration (s)", "Remark"]
     w = csv.writer(buf)
     w.writerow(headers)
     for c in items:
@@ -392,7 +493,15 @@ async def campaign_create(request: Request):
     call_end_min = _hhmm(body.get("call_end", "21:00"), 1260)
 
     ids = body.get("contact_ids") or []
-    contacts = [c for c in eo_db.get_contacts_by_ids(ids) if c.get("status") == "valid"]
+    # owner-filtered: an Admin can only attach contacts from their OWN pool
+    contacts = [c for c in eo_db.get_contacts_by_ids(ids, created_by=_contact_owner_scope(user))
+                if c.get("status") == "valid"]
+    # dedupe by phone: with per-user pools the same number can exist in several pools and
+    # a Superadmin could select it twice — one campaign row per phone, or the member gets
+    # dialed twice and the reap (keyed on campaign_id+phone) cross-stamps both rows
+    seen_phones = set()
+    contacts = [c for c in contacts
+                if c.get("phone") not in seen_phones and not seen_phones.add(c.get("phone"))]
     if not contacts:
         raise HTTPException(status_code=400, detail="Select at least one valid contact")
 
@@ -421,12 +530,15 @@ async def campaign_cancel(campaign_id: int, request: Request):
 @router.get("/campaigns/{campaign_id}/contacts")
 async def campaign_contacts(campaign_id: int, request: Request):
     user = eo_auth.require_eo(request)
-    if not _owns_or_admin(user, eo_db.get_campaign(campaign_id)):
+    campaign = eo_db.get_campaign(campaign_id)
+    if not _owns_or_admin(user, campaign):
         raise HTTPException(status_code=404, detail="Campaign not found")
     qp = request.query_params
-    return JSONResponse(eo_db.list_campaign_contacts(
-        campaign_id, status=qp.get("status") or None,
-        limit=int(qp.get("limit") or 500), offset=int(qp.get("offset") or 0)))
+    data = eo_db.list_campaign_contacts(
+        campaign_id, status=qp.get("status") or None, q=qp.get("q") or None,
+        limit=int(qp.get("limit") or 500), offset=int(qp.get("offset") or 0))
+    _attach_contact_display(data["items"], campaign, scheduler.is_enabled())
+    return JSONResponse(data)
 
 
 @router.get("/scheduler/campaign-queue")
@@ -438,7 +550,14 @@ async def scheduler_campaign_queue(request: Request):
     ids = _scope_ids(user)                       # None → full access (Superadmin)
     campaign_ids = None if ids is None else [int(i) for i in ids]
     limit = int(request.query_params.get("limit") or 200)
-    return JSONResponse(eo_db.cc_upcoming(campaign_ids, limit=limit))
+    data = eo_db.cc_upcoming(campaign_ids, limit=limit)
+    sched_on = scheduler.is_enabled()
+    _attach_contact_display(data["items"], None, sched_on)
+    data["scheduler_enabled"] = sched_on
+    active = eo_db.active_campaign()
+    data["active_campaign"] = ({"id": active["id"], "name": active["name"], "status": active["status"]}
+                               if active and _owns_or_admin(user, active) else None)
+    return JSONResponse(data)
 
 
 @router.post("/campaigns/{campaign_id}/contacts/{cc_id}/retry")
@@ -454,10 +573,19 @@ async def campaign_contact_retry(campaign_id: int, cc_id: int, request: Request)
     return {"ok": True}
 
 
-# ── contacts pool ────────────────────────────────────────────────────────────
+# ── contacts pool (per-user: an Admin sees ONLY their own; Superadmin sees all) ─
+def _contact_owner_scope(user):
+    """None → all pools (Superadmin); otherwise the caller's own pool."""
+    return None if user["role"] == "eo_admin" else int(user["id"])
+
+
+def _contact_visible(user, contact) -> bool:
+    return user["role"] == "eo_admin" or contact.get("created_by") == user["id"]
+
+
 @router.get("/contacts")
 async def contacts_list(request: Request):
-    eo_auth.require_eo(request)
+    user = eo_auth.require_eo(request)
     qp = request.query_params
     return JSONResponse(eo_db.list_contacts(
         q=qp.get("q") or None,
@@ -467,12 +595,13 @@ async def contacts_list(request: Request):
         direction=qp.get("dir") or "desc",
         limit=int(qp.get("limit") or 25),
         offset=int(qp.get("offset") or 0),
+        created_by=_contact_owner_scope(user),
     ))
 
 
 @router.post("/contacts")
 async def contacts_add(request: Request):
-    eo_auth.require_eo(request)
+    user = eo_auth.require_eo(request)
     body = await request.json()
     e164, valid = eo_import.normalize_phone(body.get("phone"))
     if not e164:
@@ -480,20 +609,21 @@ async def contacts_add(request: Request):
     cid, created = eo_db.add_contact(
         (body.get("name") or "").strip(), e164,
         source="manual", status="valid" if valid else "invalid",
+        created_by=user["id"],
     )
     return {"ok": True, "id": cid, "created": created, "phone": e164, "valid": valid}
 
 
 @router.post("/contacts/import")
 async def contacts_import(request: Request, file: UploadFile = File(...)):
-    eo_auth.require_eo(request)
+    user = eo_auth.require_eo(request)
     data = await file.read()
     try:
         rows, rejected, total = eo_import.parse_upload(file.filename, data)
     except Exception as e:
         logger.warning("Contacts import parse failed: %s", e)
         raise HTTPException(status_code=400, detail="Could not read that file. Use the sample .xlsx / .csv format.")
-    added, updated = eo_db.bulk_upsert_contacts(rows, source="upload")
+    added, updated = eo_db.bulk_upsert_contacts(rows, source="upload", created_by=user["id"])
     invalid = sum(1 for r in rows if r[2] == "invalid")
     return {"ok": True, "rows_read": total, "added": added, "updated": updated,
             "rejected": rejected, "invalid": invalid}
@@ -501,9 +631,9 @@ async def contacts_import(request: Request, file: UploadFile = File(...)):
 
 @router.post("/contacts/delete")
 async def contacts_delete(request: Request):
-    eo_auth.require_eo(request)
+    user = eo_auth.require_eo(request)
     body = await request.json()
-    n = eo_db.delete_contacts(body.get("ids") or [])
+    n = eo_db.delete_contacts(body.get("ids") or [], created_by=_contact_owner_scope(user))
     return {"ok": True, "deleted": n}
 
 
@@ -530,6 +660,12 @@ async def eo_callbacks(request: Request):
     if scope is not None:
         items = [c for c in items if str(c.get("campaign_id") or "") in scope]
     items = _label_and_strip(items, include_cost)
+    for c in items:
+        cb = c.get("callback") or {}
+        label, variant = _CALLBACK_LABELS.get(cb.get("status"), (cb.get("status") or "—", "amber"))
+        c["display_status"] = label
+        c["display_variant"] = variant
+        c["result_outcome_label"] = _rsvp_label(cb.get("result_outcome"))
     state = await store.load_scheduler_state()
     return JSONResponse({"items": items, "scheduler_enabled": scheduler.is_enabled(),
                          "paused_until": state.get("paused_until")})
@@ -588,6 +724,61 @@ async def eo_callback_reschedule(call_id: str, request: Request):
                "next_retry_at": None, "last_error": None})
     await store.save_call(call)
     return {"ok": True}
+
+
+# ── remarks (user-editable note on every grid row) ───────────────────────────
+@router.patch("/calls/{call_id}/remark")
+async def eo_call_remark(call_id: str, request: Request):
+    user = eo_auth.require_eo(request)
+    call = await store.load_call(call_id)
+    if not call:
+        raise HTTPException(status_code=404, detail="Call not found")
+    scope = _scope_ids(user)
+    if scope is not None and str(call.get("campaign_id") or "") not in scope:
+        raise HTTPException(status_code=404, detail="Call not found")
+    if call.get("status") == "in_progress":
+        # the recorder rewrites the whole record at close — an edit now would be lost
+        raise HTTPException(status_code=409, detail="Call is still in progress — add the remark once it ends")
+    call["remark"] = _clean_remark(await request.json())
+    await store.save_call(call)
+    return {"ok": True, "remark": call["remark"]}
+
+
+@router.patch("/callbacks/{call_id}/remark")
+async def eo_callback_remark(call_id: str, request: Request):
+    user = eo_auth.require_eo(request)
+    call = await _owned_callback(user, call_id)
+    if call["callback"].get("status") == "in_flight":
+        # the scheduler is mid-claim on this record; a whole-file save now could revert
+        # its in_flight status and cause a double dial — tell the user to retry shortly
+        raise HTTPException(status_code=409, detail="This callback is being dialed right now — try again in a minute")
+    call["callback"]["remark"] = _clean_remark(await request.json())
+    await store.save_call(call)
+    return {"ok": True, "remark": call["callback"]["remark"]}
+
+
+@router.patch("/campaigns/{campaign_id}/contacts/{cc_id}/remark")
+async def eo_campaign_contact_remark(campaign_id: int, cc_id: int, request: Request):
+    user = eo_auth.require_eo(request)
+    if not _owns_or_admin(user, eo_db.get_campaign(campaign_id)):
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    cc = eo_db.get_campaign_contact(cc_id)
+    if not cc or int(cc.get("campaign_id") or 0) != int(campaign_id):
+        raise HTTPException(status_code=404, detail="Recipient not found")
+    remark = _clean_remark(await request.json())
+    eo_db.cc_update(int(cc_id), remark=remark)
+    return {"ok": True, "remark": remark}
+
+
+@router.patch("/contacts/{contact_id}/remark")
+async def eo_contact_remark(contact_id: int, request: Request):
+    user = eo_auth.require_eo(request)
+    contact = eo_db.get_contact(contact_id)
+    if not contact or not _contact_visible(user, contact):
+        raise HTTPException(status_code=404, detail="Contact not found")
+    remark = _clean_remark(await request.json())
+    eo_db.set_contact_remark(int(contact_id), remark)
+    return {"ok": True, "remark": remark}
 
 
 @router.post("/scheduler/toggle")

@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { fmtDate } from './CallLogs.jsx'
+import RemarkCell from './RemarkCell.jsx'
 
 // Upcoming campaign dial queue — the pending/calling contacts the runner will call
 // next across the live/scheduled campaign(s). Sibling of <Callbacks> on the Scheduler
 // page: callbacks are RSVP "call me back later"; this is the campaign auto-dial queue.
-export default function CampaignQueue({ title = 'Callback attempts', desc = '' }) {
+// onMeta (optional) reports { scheduler_enabled, active_campaign } from the queue
+// response up to the parent (pass a stable fn, e.g. a setState).
+export default function CampaignQueue({ title = 'Callback attempts', desc = '', onMeta }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -13,10 +16,14 @@ export default function CampaignQueue({ title = 'Callback attempts', desc = '' }
   const load = useCallback(() => {
     setLoading(true)
     api.get('/scheduler/campaign-queue')
-      .then((d) => { setItems(d.items || []); setErr('') })
+      .then((d) => {
+        setItems(d.items || [])
+        onMeta?.({ scheduler_enabled: d.scheduler_enabled, active_campaign: d.active_campaign })
+        setErr('')
+      })
       .catch((e) => setErr(e.message))
       .finally(() => setLoading(false))
-  }, [])
+  }, [onMeta])
 
   useEffect(() => { load() }, [load])
 
@@ -28,14 +35,13 @@ export default function CampaignQueue({ title = 'Callback attempts', desc = '' }
     catch (e) { setErr(e.message) }
   }
 
-  // When this contact rings next (open rows) or last rang (history rows).
-  function whenCell(c) {
+  // When this contact rings next: in-flight rows say so; otherwise next_attempt_at,
+  // then a scheduled campaign's start time, then a dash.
+  function nextDueCell(c) {
     if (c.call_status === 'calling') return <span className="muted">In progress</span>
-    if (['done', 'failed', 'no_answer'].includes(c.call_status))   // history — show when it last rang
-      return c.last_attempt_at ? <span className="muted">{fmtDate(c.last_attempt_at)}</span> : <span className="muted">—</span>
-    // A not-yet-started campaign rings at its start time; a live one at next_attempt_at.
-    const at = c.campaign_status === 'scheduled' ? c.campaign_start_at : c.next_attempt_at
-    return at ? fmtDate(at) : <span className="muted">Queued</span>
+    if (c.next_attempt_at) return fmtDate(c.next_attempt_at)
+    if (c.campaign_status === 'scheduled' && c.campaign_start_at) return fmtDate(c.campaign_start_at)
+    return <span className="muted">—</span>
   }
 
   return (
@@ -52,15 +58,15 @@ export default function CampaignQueue({ title = 'Callback attempts', desc = '' }
         <table>
           <thead>
             <tr>
-              <th className="no-sort">Campaign</th>
               <th className="no-sort">Name</th>
-              <th className="no-sort">Phone Number</th>
-              <th className="no-sort">Next / last call</th>
+              <th className="no-sort">Phone</th>
+              <th className="no-sort">Campaign</th>
+              <th className="no-sort">Last Attempt</th>
+              <th className="no-sort">Next Call Due</th>
               <th className="no-sort num">Attempts</th>
-              <th className="no-sort num">Total attempts</th>
-              <th className="no-sort">Outcome</th>
               <th className="no-sort">Status</th>
-              <th className="no-sort">Action</th>
+              <th className="no-sort">Remark</th>
+              <th className="no-sort">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -70,14 +76,20 @@ export default function CampaignQueue({ title = 'Callback attempts', desc = '' }
               <tr><td colSpan={9} className="empty">No callback attempts yet.</td></tr>
             ) : items.map((c) => (
               <tr key={c.id}>
-                <td>{c.campaign_name || <span className="muted">—</span>}</td>
                 <td>{c.name || <span className="muted">—</span>}</td>
                 <td style={{ fontFamily: 'var(--mono)' }}>{c.phone}</td>
-                <td>{whenCell(c)}</td>
-                <td className="num">{c.attempts}</td>
-                <td className="num">{(c.campaign_max_per_day || 3) * (c.campaign_days || 1)}</td>
-                <td>{c.rsvp_outcome ? <span className={`pill ${c.rsvp_outcome}`}>{c.rsvp_outcome}</span> : <span className="muted">—</span>}</td>
-                <td><span className={`pill ${c.call_status}`}>{c.call_status}</span></td>
+                <td>{c.campaign_name || <span className="muted">—</span>}</td>
+                <td>{fmtDate(c.last_attempt_at)}</td>
+                <td>{nextDueCell(c)}</td>
+                <td className="num">{c.attempts} / {(c.campaign_max_per_day || 3) * (c.campaign_days || 1)}</td>
+                <td>
+                  <span className={`pill ${c.display_variant || 'amber'}`} title={c.last_error || undefined}>
+                    {c.display_status || c.call_status}
+                  </span>
+                </td>
+                <td>
+                  <RemarkCell value={c.remark} onSave={(v) => api.patch(`/campaigns/${c.campaign_id}/contacts/${c.id}/remark`, { remark: v })} />
+                </td>
                 <td>
                   {['pending', 'failed', 'no_answer'].includes(c.call_status)
                     ? <button className="btn sm" onClick={() => callNow(c)}>Call now</button>

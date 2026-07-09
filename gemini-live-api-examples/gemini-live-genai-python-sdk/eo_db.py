@@ -51,14 +51,20 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS contacts (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT,
-    phone      TEXT UNIQUE NOT NULL,                  -- E.164
+    phone      TEXT NOT NULL,                         -- E.164
     source     TEXT NOT NULL DEFAULT 'upload',        -- upload | manual | plivo
     status     TEXT NOT NULL DEFAULT 'valid',         -- valid | invalid
+    remark     TEXT,
+    created_by INTEGER,                               -- owning user; always stamped on insert
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    UNIQUE(created_by, phone)                         -- per-user pools: same phone may exist per owner
 );
 CREATE INDEX IF NOT EXISTS idx_contacts_created ON contacts(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
+CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone);
+-- idx_contacts_owner is created in init() AFTER the created_by migration: putting it
+-- here would crash startup on a legacy DB whose contacts table predates the column.
 
 CREATE TABLE IF NOT EXISTS campaigns (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,11 +120,63 @@ def init() -> None:
         cc_cols = {r["name"] for r in conn.execute("PRAGMA table_info(campaign_contacts)").fetchall()}
         if "last_error" not in cc_cols:
             conn.execute("ALTER TABLE campaign_contacts ADD COLUMN last_error TEXT")
+        if "remark" not in cc_cols:
+            conn.execute("ALTER TABLE campaign_contacts ADD COLUMN remark TEXT")
         camp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(campaigns)").fetchall()}
         if "call_start_min" not in camp_cols:
             conn.execute("ALTER TABLE campaigns ADD COLUMN call_start_min INTEGER NOT NULL DEFAULT 540")
         if "call_end_min" not in camp_cols:
             conn.execute("ALTER TABLE campaigns ADD COLUMN call_end_min INTEGER NOT NULL DEFAULT 1260")
+        contact_cols = {r["name"] for r in conn.execute("PRAGMA table_info(contacts)").fetchall()}
+        if "remark" not in contact_cols:
+            conn.execute("ALTER TABLE contacts ADD COLUMN remark TEXT")
+        if "created_by" not in contact_cols:
+            # Per-user contact pools: rebuild the table so UNIQUE moves from (phone) to
+            # (created_by, phone), and hand every legacy row to the seed Superadmin —
+            # NEVER leave created_by NULL (NULLs are pairwise distinct in a SQLite unique
+            # index, so a NULL-owned row would never upsert and re-imports would duplicate).
+            owner_row = conn.execute(
+                "SELECT id FROM users WHERE role = 'eo_admin' ORDER BY id ASC LIMIT 1").fetchone()
+            if owner_row is None:
+                owner_row = conn.execute("SELECT id FROM users ORDER BY id ASC LIMIT 1").fetchone()
+            legacy_owner = int(owner_row["id"]) if owner_row is not None else 1
+            # CRASH-ATOMIC: python sqlite3's legacy autocommit implicitly commits before
+            # each DDL statement, so a kill between RENAME and the copy would strand the
+            # whole pool in contacts_legacy (the next boot recreates an EMPTY contacts and
+            # skips this branch). Run the rebuild as ONE real SQLite transaction instead.
+            old_isolation = conn.isolation_level
+            conn.isolation_level = None          # manual transaction control
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute("ALTER TABLE contacts RENAME TO contacts_legacy")
+                conn.execute("""
+                    CREATE TABLE contacts (
+                        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name       TEXT,
+                        phone      TEXT NOT NULL,
+                        source     TEXT NOT NULL DEFAULT 'upload',
+                        status     TEXT NOT NULL DEFAULT 'valid',
+                        remark     TEXT,
+                        created_by INTEGER,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        UNIQUE(created_by, phone)
+                    )""")
+                conn.execute(
+                    "INSERT INTO contacts (id, name, phone, source, status, remark, created_by, created_at, updated_at) "
+                    "SELECT id, name, phone, source, status, remark, ?, created_at, updated_at FROM contacts_legacy",
+                    (legacy_owner,))
+                conn.execute("DROP TABLE contacts_legacy")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_created ON contacts(created_at DESC)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_phone ON contacts(phone)")
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            finally:
+                conn.isolation_level = old_isolation
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_owner ON contacts(created_by)")
         conn.commit()
 
 
@@ -183,45 +241,53 @@ def update_user_password(user_id: int, password_hash: str, password_salt: str) -
 _CONTACT_SORTS = {"name", "phone", "source", "status", "created_at"}
 
 
-def add_contact(name: str, phone: str, source: str = "manual", status: str = "valid"):
-    """Upsert one contact by phone. Returns (id, created_bool)."""
+def add_contact(name: str, phone: str, source: str = "manual", status: str = "valid", created_by=None):
+    """Upsert one contact by (owner, phone) — each user has their own pool.
+    Returns (id, created_bool)."""
     now = _now()
-    existing = _one("SELECT id FROM contacts WHERE phone = ?", (phone,))
+    owner = int(created_by) if created_by is not None else None
+    existing = _one("SELECT id FROM contacts WHERE created_by IS ? AND phone = ?", (owner, phone))
     if existing:
         _exec(
-            "UPDATE contacts SET name = COALESCE(NULLIF(?, ''), name), status = ?, updated_at = ? WHERE phone = ?",
-            (name or "", status, now, phone),
+            "UPDATE contacts SET name = COALESCE(NULLIF(?, ''), name), status = ?, updated_at = ? WHERE id = ?",
+            (name or "", status, now, existing["id"]),
         )
         return existing["id"], False
     cid = _exec(
-        "INSERT INTO contacts (name, phone, source, status, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-        (name, phone, source, status, now, now),
+        "INSERT INTO contacts (name, phone, source, status, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+        (name, phone, source, status, owner, now, now),
     )
     return cid, True
 
 
-def bulk_upsert_contacts(rows, source: str = "upload"):
-    """rows: iterable of (name, phone, status). Returns (added, updated)."""
+def bulk_upsert_contacts(rows, source: str = "upload", created_by=None):
+    """rows: iterable of (name, phone, status). Upserts into the OWNER's pool.
+    Returns (added, updated)."""
     rows = list(rows)
     if not rows:
         return 0, 0
     now = _now()
+    owner = int(created_by) if created_by is not None else None
     conn = get_conn()
     with _lock:
-        existing = {r["phone"] for r in conn.execute("SELECT phone FROM contacts").fetchall()}
+        existing = {r["phone"] for r in conn.execute(
+            "SELECT phone FROM contacts WHERE created_by IS ?", (owner,)).fetchall()}
         conn.executemany(
-            "INSERT INTO contacts (name, phone, source, status, created_at, updated_at) VALUES (?,?,?,?,?,?) "
-            "ON CONFLICT(phone) DO UPDATE SET "
+            "INSERT INTO contacts (name, phone, source, status, created_by, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(created_by, phone) DO UPDATE SET "
             "name = COALESCE(NULLIF(excluded.name, ''), contacts.name), "
             "status = excluded.status, updated_at = excluded.updated_at",
-            [(nm, ph, source, st, now, now) for (nm, ph, st) in rows],
+            [(nm, ph, source, st, owner, now, now) for (nm, ph, st) in rows],
         )
         conn.commit()
     added = sum(1 for (_nm, ph, _st) in rows if ph not in existing)
     return added, len(rows) - added
 
 
-def list_contacts(q=None, source=None, status=None, sort="created_at", direction="desc", limit=25, offset=0):
+def list_contacts(q=None, source=None, status=None, sort="created_at", direction="desc",
+                  limit=25, offset=0, created_by=None):
+    """created_by=None → all pools (Superadmin); an int scopes to that owner's pool."""
     where, params = [], []
     if q:
         where.append("(name LIKE ? OR phone LIKE ?)")
@@ -232,6 +298,9 @@ def list_contacts(q=None, source=None, status=None, sort="created_at", direction
     if status:
         where.append("status = ?")
         params.append(status)
+    if created_by is not None:
+        where.append("created_by = ?")
+        params.append(int(created_by))
     wsql = ("WHERE " + " AND ".join(where)) if where else ""
     col = sort if sort in _CONTACT_SORTS else "created_at"
     dir_sql = "ASC" if str(direction).lower() == "asc" else "DESC"
@@ -243,29 +312,53 @@ def list_contacts(q=None, source=None, status=None, sort="created_at", direction
     return {"items": rows, "total": int(total)}
 
 
-def get_contacts_by_ids(ids):
+def get_contacts_by_ids(ids, created_by=None):
+    """created_by=None → any pool (Superadmin); an int restricts to that owner's rows
+    (an agent can never attach another user's contacts to a campaign)."""
     ids = [int(i) for i in ids if i]
     if not ids:
         return []
     ph = ",".join("?" * len(ids))
-    return _rows(f"SELECT * FROM contacts WHERE id IN ({ph})", tuple(ids))
+    sql = f"SELECT * FROM contacts WHERE id IN ({ph})"
+    params: tuple = tuple(ids)
+    if created_by is not None:
+        sql += " AND created_by = ?"
+        params += (int(created_by),)
+    return _rows(sql, params)
 
 
-def delete_contacts(ids) -> int:
+def delete_contacts(ids, created_by=None) -> int:
     ids = [int(i) for i in ids if i]
     if not ids:
         return 0
     ph = ",".join("?" * len(ids))
+    sql = f"DELETE FROM contacts WHERE id IN ({ph})"
+    params: tuple = tuple(ids)
+    if created_by is not None:
+        sql += " AND created_by = ?"
+        params += (int(created_by),)
     conn = get_conn()
     with _lock:
-        cur = conn.execute(f"DELETE FROM contacts WHERE id IN ({ph})", tuple(ids))
+        cur = conn.execute(sql, params)
         conn.commit()
         return cur.rowcount
 
 
-def count_contacts() -> int:
-    r = _one("SELECT COUNT(*) c FROM contacts")
+def count_contacts(created_by=None) -> int:
+    if created_by is not None:
+        r = _one("SELECT COUNT(*) c FROM contacts WHERE created_by = ?", (int(created_by),))
+    else:
+        r = _one("SELECT COUNT(*) c FROM contacts")
     return int(r["c"]) if r else 0
+
+
+def get_contact(contact_id: int) -> dict | None:
+    return _one("SELECT * FROM contacts WHERE id = ?", (int(contact_id),))
+
+
+def set_contact_remark(contact_id: int, remark: str) -> None:
+    _exec("UPDATE contacts SET remark = ?, updated_at = ? WHERE id = ?",
+          (remark, _now(), int(contact_id)))
 
 
 # ── campaigns ────────────────────────────────────────────────────────────────
@@ -395,11 +488,14 @@ def cc_by_status(campaign_id: int, status: str) -> list[dict]:
     )
 
 
-def list_campaign_contacts(campaign_id, status=None, limit=500, offset=0):
+def list_campaign_contacts(campaign_id, status=None, limit=500, offset=0, q=None):
     where, params = ["campaign_id = ?"], [int(campaign_id)]
     if status:
         where.append("call_status = ?")
         params.append(status)
+    if q:
+        where.append("(name LIKE ? OR phone LIKE ?)")
+        params += [f"%{q}%", f"%{q}%"]
     wsql = "WHERE " + " AND ".join(where)
     total = _one(f"SELECT COUNT(*) c FROM campaign_contacts {wsql}", tuple(params))["c"]
     rows = _rows(
@@ -438,7 +534,9 @@ def cc_upcoming(campaign_ids=None, limit=200):
     rows = _rows(
         "SELECT cc.*, c.name AS campaign_name, c.status AS campaign_status, "
         "c.start_at AS campaign_start_at, c.callback_max_per_day AS campaign_max_per_day, "
-        f"c.callback_days AS campaign_days {base} "
+        "c.callback_days AS campaign_days, "
+        "c.call_start_min AS campaign_call_start_min, c.call_end_min AS campaign_call_end_min "
+        f"{base} "
         "ORDER BY (cc.call_status IN ('pending','calling')) DESC, "
         "(cc.next_attempt_at IS NULL) DESC, cc.next_attempt_at ASC, "
         "cc.last_attempt_at DESC, cc.id ASC LIMIT ?",
@@ -524,11 +622,27 @@ def names_by_campaign_phone(pairs) -> dict:
     return out
 
 
+def phones_by_name_query(q: str) -> set:
+    """Phones whose contact NAME matches q, across the contacts pool and every campaign's
+    recipient names. Powers name search on call grids (call records store only the phone)."""
+    q = (q or "").strip()
+    if not q:
+        return set()
+    like = f"%{q}%"
+    rows = _rows(
+        "SELECT phone FROM contacts WHERE name LIKE ? "
+        "UNION SELECT phone FROM campaign_contacts WHERE name LIKE ?",
+        (like, like))
+    return {r["phone"] for r in rows if r.get("phone")}
+
+
 def names_by_phone(phones) -> dict:
-    """phone -> contact name from the global contacts pool (fallback for non-campaign calls)."""
+    """phone -> contact name, looked up across ALL pools (display labelling only — call
+    visibility itself is campaign-scoped). With per-user pools a phone can exist in several
+    pools; newest row wins deterministically (ORDER BY id ASC → later overwrite = newest)."""
     phones = sorted({str(p) for p in phones if p})
     if not phones:
         return {}
     ph = ",".join("?" * len(phones))
-    rows = _rows(f"SELECT phone, name FROM contacts WHERE phone IN ({ph})", tuple(phones))
+    rows = _rows(f"SELECT phone, name FROM contacts WHERE phone IN ({ph}) ORDER BY id ASC", tuple(phones))
     return {r["phone"]: r["name"] for r in rows if (r.get("name") or "").strip()}

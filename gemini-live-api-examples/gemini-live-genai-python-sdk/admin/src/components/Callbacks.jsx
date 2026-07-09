@@ -2,13 +2,15 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api.js'
 import { fmtDate } from './CallLogs.jsx'
 import Modal from './Modal.jsx'
+import RemarkCell from './RemarkCell.jsx'
 
 const pad = (n) => String(n).padStart(2, '0')
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` }
 const nowTimeStr = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}` }
 
 // Scheduler / callbacks panel — reused on Dashboard and the Scheduler page.
-export default function Callbacks({ title = 'Callbacks', desc = '', canToggle = true }) {
+// onEnabledChange (optional) reports the scheduler on/off state up to the parent.
+export default function Callbacks({ title = 'Callbacks', desc = '', canToggle = true, onEnabledChange }) {
   const [items, setItems] = useState([])
   const [enabled, setEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -20,10 +22,10 @@ export default function Callbacks({ title = 'Callbacks', desc = '', canToggle = 
   const load = useCallback(() => {
     setLoading(true)
     api.get('/callbacks')
-      .then((d) => { setItems(d.items || []); setEnabled(!!d.scheduler_enabled); setErr('') })
+      .then((d) => { setItems(d.items || []); setEnabled(!!d.scheduler_enabled); onEnabledChange?.(!!d.scheduler_enabled); setErr('') })
       .catch((e) => setErr(e.message))
       .finally(() => setLoading(false))
-  }, [])
+  }, [onEnabledChange])
 
   useEffect(() => { load() }, [load])
 
@@ -35,6 +37,7 @@ export default function Callbacks({ title = 'Callbacks', desc = '', canToggle = 
     try {
       const r = await api.post('/scheduler/toggle', { enabled: !enabled })
       setEnabled(r.enabled)
+      onEnabledChange?.(!!r.enabled)
     } catch (e) { setErr(e.message) }
   }
 
@@ -72,33 +75,40 @@ export default function Callbacks({ title = 'Callbacks', desc = '', canToggle = 
           <thead>
             <tr>
               <th className="no-sort">Name</th>
-              <th className="no-sort">Caller</th>
+              <th className="no-sort">Phone</th>
               <th className="no-sort">Campaign</th>
-              <th className="no-sort">Due</th>
+              <th className="no-sort">Last Attempt</th>
+              <th className="no-sort">Next Call Due</th>
               <th className="no-sort num">Attempts</th>
               <th className="no-sort">Status</th>
+              <th className="no-sort">Remark</th>
               <th className="no-sort">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="empty">Loading…</td></tr>
+              <tr><td colSpan={9} className="empty">Loading…</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={7} className="empty">No callbacks yet.</td></tr>
+              <tr><td colSpan={9} className="empty">No callbacks yet.</td></tr>
             ) : items.map((c) => {
               const cb = c.callback || c
               const id = c.id || c.call_sid
               const done = ['completed', 'cancelled', 'in_flight'].includes(cb.status)
+              const outcome = c.result_outcome_label || cb.result_outcome
               return (
                 <tr key={id}>
                   <td>{c.contact_name || <span className="muted">—</span>}</td>
                   <td>{c.caller || c.phone || '—'}</td>
                   <td>{c.campaign_name || <span className="muted">—</span>}</td>
+                  <td>{fmtDate(cb.last_attempt_at)}</td>
                   <td>{fmtDate(cb.due_at || cb.next_retry_at)}</td>
                   <td className="num">{cb.attempts ?? 0}</td>
                   <td>
-                    <span className={`pill ${(cb.status || 'pending')}`}>{cb.status || 'pending'}</span>
-                    {cb.result_outcome && <span className="muted" style={{ marginLeft: 6, fontSize: '0.75rem' }}>→ {cb.result_outcome}</span>}
+                    <span className={`pill ${c.display_variant || 'amber'}`}>{c.display_status || cb.status || 'pending'}</span>
+                    {outcome && <span className="muted" style={{ marginLeft: 6, fontSize: '0.75rem' }}>→ {outcome}</span>}
+                  </td>
+                  <td>
+                    <RemarkCell value={cb.remark} onSave={(v) => api.patch(`/callbacks/${encodeURIComponent(id)}/remark`, { remark: v })} />
                   </td>
                   <td style={{ display: 'flex', gap: 6 }}>
                     <button className="btn sm" disabled={done} onClick={() => {

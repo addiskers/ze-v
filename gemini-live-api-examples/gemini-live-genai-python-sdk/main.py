@@ -60,9 +60,24 @@ EVENT = {
 def handle_record_rsvp(**kwargs):
     """The agent calls this once per call with the RSVP outcome."""
     status = (kwargs.get("outcome_status") or "").strip().lower()
-    if status not in ("yes", "no", "callback", "do_not_contact", "wrong_number"):
-        # Back-compat: derive from the legacy `attending` boolean.
-        status = "yes" if kwargs.get("attending") else "no"
+    note = (kwargs.get("note") or "").strip().lower()
+    vm_markers = ("voicemail", "voice mail", "answering machine", "answer machine")
+    if status not in ("yes", "no", "callback", "voicemail", "do_not_contact", "wrong_number"):
+        # Unknown status: machine-answer wording maps to "voicemail"; else "yes" only if
+        # the legacy `attending` boolean is set; otherwise "callback" — a recoverable
+        # outcome (someone re-dials), never a silent hard "no".
+        if any(m in status for m in vm_markers) or any(m in note for m in vm_markers):
+            status = "voicemail"
+        else:
+            status = "yes" if kwargs.get("attending") else "callback"
+    elif (status == "callback"
+          and not (kwargs.get("callback_time_text") or "").strip()
+          and not (kwargs.get("callback_time_iso") or "").strip()
+          and any(m in note for m in vm_markers)):
+        # Old-prompt habit: a machine answer recorded as "callback" with a voicemail note
+        # and no requested time. That's a voicemail, not a member request — recording it
+        # as "callback" is what created phantom next-day-10am member callbacks.
+        status = "voicemail"
     result = {
         "success": True,
         "silent": True,
@@ -1021,7 +1036,7 @@ const fmtPct=(x)=>(x==null||isNaN(x))?'—':(x*100).toFixed(1)+'%';
 function fmtDur(s){s=s||0;const m=Math.floor(s/60),r=Math.round(s%60);return m+':'+String(r).padStart(2,'0');}
 function fmtDT(iso){if(!iso)return '—';const d=new Date(iso);return d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}
 function esc(s){return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
-function rsvpPill(s){if(!s)return '<span class="dash">—</span>';const col={yes:'#10b981',no:'#ef4444',callback:'#f59e0b',do_not_contact:'#94a3b8'}[s]||'#94a3b8';return '<span class="pill" style="background:'+col+'22;color:'+col+'">'+esc(s)+'</span>';}
+function rsvpPill(s){if(!s)return '<span class="dash">—</span>';const col={yes:'#10b981',no:'#ef4444',callback:'#f59e0b',voicemail:'#f59e0b',wrong_number:'#ef4444',do_not_contact:'#94a3b8'}[s]||'#94a3b8';return '<span class="pill" style="background:'+col+'22;color:'+col+'">'+esc(s)+'</span>';}
 function cbPill(s){const col={pending:'#f59e0b',in_flight:'#00d4ff',completed:'#10b981',failed:'#ef4444',cancelled:'#94a3b8'}[s]||'#94a3b8';return '<span class="pill" style="background:'+col+'22;color:'+col+'">'+esc(s||'')+'</span>';}
 
 /* ---------- callbacks ---------- */

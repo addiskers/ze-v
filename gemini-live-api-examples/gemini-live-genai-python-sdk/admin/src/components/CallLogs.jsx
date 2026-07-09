@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, qs, getToken } from '../api.js'
 import { useAuth } from '../auth.jsx'
 import { IconSearch, IconDownload, IconPhone } from './icons.jsx'
+import RemarkCell from './RemarkCell.jsx'
 
 export function fmtDur(s) {
   s = Math.round(Number(s) || 0)
@@ -35,7 +36,7 @@ function StatusPill({ call }) {
 // Reusable call-logs panel. Pass `campaignId` to scope to one campaign.
 export default function CallLogs({ campaignId, title = 'Call Logs', showCampaignColumn = true, showSource = true }) {
   const { isAdmin } = useAuth()
-  const colCount = 7 + (showSource ? 1 : 0) + (showCampaignColumn ? 1 : 0) + (isAdmin ? 1 : 0)
+  const colCount = 8 + (showSource ? 1 : 0) + (showCampaignColumn ? 1 : 0) + (isAdmin ? 1 : 0)
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -112,7 +113,7 @@ export default function CallLogs({ campaignId, title = 'Call Logs', showCampaign
       <div className="toolbar">
         <div className="search">
           <span className="ic"><IconSearch /></span>
-          <input placeholder="Search caller / phone…" value={q} onChange={(e) => { setPage(0); setQ(e.target.value) }} />
+          <input placeholder="Search name / phone…" value={q} onChange={(e) => { setPage(0); setQ(e.target.value) }} />
         </div>
         {showSource && (
           <select value={source} onChange={(e) => { setPage(0); setSource(e.target.value) }}>
@@ -141,6 +142,7 @@ export default function CallLogs({ campaignId, title = 'Call Logs', showCampaign
               {th('language', 'Language')}
               {th('status', 'Status')}
               <th className="no-sort">RSVP</th>
+              <th className="no-sort">Remark</th>
               {isAdmin && th('total_cost_usd', 'Cost', 'num')}
             </tr>
           </thead>
@@ -159,7 +161,15 @@ export default function CallLogs({ campaignId, title = 'Call Logs', showCampaign
                 <td className="num">{fmtDur(c.duration_seconds)}</td>
                 <td>{c.language || '—'}</td>
                 <td><StatusPill call={c} /></td>
-                <td>{c.rsvp_outcome_status || (c.booking_created ? 'yes' : '—')}</td>
+                <td>{c.rsvp_outcome_label || c.rsvp_outcome_status || (c.booking_created ? 'yes' : '—')}</td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  <RemarkCell
+                    value={c.remark}
+                    disabled={c.status === 'in_progress'}
+                    disabledTitle="Available once the call ends"
+                    onSave={(v) => api.patch(`/calls/${encodeURIComponent(c.id || c.call_sid)}/remark`, { remark: v })}
+                  />
+                </td>
                 {isAdmin && <td className="num">{fmtCost(c.total_cost_usd)}</td>}
               </tr>
             ))}
@@ -209,9 +219,24 @@ export function CallDrawer({ call, onClose }) {
         <div className="sub">{fmtDate(call.started_at)} · {call.source} · {fmtDur(call.duration_seconds)}</div>
         <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: 14 }}>
           <div><label>Status</label><StatusPill call={call} /></div>
-          <div><label>RSVP</label>{call.rsvp_outcome_status || (call.booking_created ? 'yes' : '—')}</div>
+          <div><label>RSVP</label>{call.rsvp_outcome_label || call.rsvp_outcome_status || (call.booking_created ? 'yes' : '—')}</div>
+          {call.rsvp_note && (
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label>Agent note</label>
+              <span className="muted" style={{ fontSize: '0.82rem' }}>{call.rsvp_note}</span>
+            </div>
+          )}
           {call.campaign_name && <div><label>Campaign</label>{call.campaign_name}</div>}
           {call.language && <div><label>Language</label>{call.language}</div>}
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label>Remark</label>
+            <RemarkCell
+              value={call.remark}
+              disabled={call.status === 'in_progress'}
+              disabledTitle="Available once the call ends"
+              onSave={(v) => api.patch(`/calls/${encodeURIComponent(call.id || call.call_sid)}/remark`, { remark: v })}
+            />
+          </div>
         </div>
         {call.callback && (
           <div className="card" style={{ marginBottom: 14, padding: 12 }}>

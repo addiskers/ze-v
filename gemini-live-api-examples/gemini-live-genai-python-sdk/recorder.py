@@ -190,14 +190,21 @@ class CallRecorder:
                     # callback moves from pending → history and the origin can show what it led to.
                     cb["result_outcome"] = outcome
                     cb["result_call_id"] = self.call.get("id")
-                    # resolve the block only for a real answer, and never resurrect a cancelled one
-                    if outcome != "callback" and cb.get("status") in ("completed", "in_flight", "pending"):
+                    # resolve the block only for a real answer — "callback" (they asked again)
+                    # and "voicemail" (a machine answered, not the member) are NOT answers —
+                    # and never resurrect a cancelled one
+                    if (outcome not in ("callback", "voicemail")
+                            and cb.get("status") in ("completed", "in_flight", "pending")):
                         cb["status"] = "completed"
                     try:
                         await store.save_call(origin)
                     except Exception as e:
                         logger.warning(f"back-prop: origin save failed: {e}")
             # ---- (b) campaign contact ----
+            # Rolls up EVERY outcome, incl. "voicemail": the callback chain is spent (the
+            # generation cap stops re-scheduling), so "Voicemail" is the truthful final
+            # state — better than the contact showing a phantom "Callback requested"
+            # forever. Only the block-resolution above treats voicemail as a non-answer.
             cid = self.call.get("campaign_id")
             caller = (self.call.get("caller") or "").strip()
             if cid and caller:
@@ -255,9 +262,16 @@ class CallRecorder:
             self.call["rsvp_callback_time_text"] = result.get("callback_time_text", "") or ""
             self.call["rsvp_do_not_contact"] = bool(result.get("do_not_contact"))
             self.call["rsvp_accompanying_children"] = result.get("accompanying_children", "") or ""
+            self.call["rsvp_note"] = result.get("note", "") or ""
+            if result.get("guest_name"):
+                self.call["rsvp_guest_name"] = result.get("guest_name")
             if status == "callback":
                 self._schedule_callback(result)
             else:
+                # "voicemail" lands here on purpose: a machine answering is NOT a member
+                # request — it must NOT create a "user requested callback". Campaign calls
+                # are retried by campaign_runner (same track as ring-no-answer); non-campaign
+                # calls just record the outcome (admin can Call now).
                 # Outcome changed (e.g. maybe→yes): cancel any callback we'd queued.
                 cb = self.call.get("callback")
                 if cb and cb.get("status") == "pending":

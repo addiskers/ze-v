@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, qs } from '../api.js'
 import { fmtDate } from './CallLogs.jsx'
 import { IconSearch } from './icons.jsx'
+import RemarkCell from './RemarkCell.jsx'
 
 const PAGE = 25
 
@@ -94,13 +95,14 @@ export default function ContactsTable({
               {th('source', 'Source')}
               {th('status', 'Status')}
               {th('created_at', 'Added On')}
+              <th className="no-sort">Remark</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={selectable ? 6 : 5} className="empty">Loading…</td></tr>
+              <tr><td colSpan={selectable ? 7 : 6} className="empty">Loading…</td></tr>
             ) : items.length === 0 ? (
-              <tr><td colSpan={selectable ? 6 : 5} className="empty">No contacts yet. Upload a file or add one.</td></tr>
+              <tr><td colSpan={selectable ? 7 : 6} className="empty">No contacts yet. Upload a file or add one.</td></tr>
             ) : items.map((c) => (
               <tr key={c.id} className={selectable ? 'clickable' : ''} onClick={selectable ? () => onToggle?.(c.id) : undefined}>
                 {selectable && (
@@ -113,6 +115,9 @@ export default function ContactsTable({
                 <td><span className="pill src">{c.source}</span></td>
                 <td><span className={`pill ${c.status}`}>{c.status}</span></td>
                 <td>{fmtDate(c.created_at)}</td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  <RemarkCell value={c.remark} onSave={(v) => api.patch(`/contacts/${c.id}/remark`, { remark: v })} />
+                </td>
               </tr>
             ))}
           </tbody>

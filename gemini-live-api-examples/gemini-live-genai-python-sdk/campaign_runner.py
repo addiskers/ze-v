@@ -86,8 +86,16 @@ def _apply_failure(cc, campaign, now, error=None):
     else:
         fields["call_status"] = "pending"
         if int(cc.get("day_attempts") or 0) >= max_day:
-            # today's quota is spent → resume next calendar day
-            nxt = datetime.combine(now.date() + timedelta(days=1), dtime(9, 0), tzinfo=timezone.utc)
+            # today's quota is spent → resume the next CALLING-TZ calendar day at the
+            # campaign's window start. Both the DATE and the TIME must be computed in the
+            # calling timezone (callbacks._tz(), CALLBACK_TZ — the same zone that gates the
+            # dial window): the old 09:00-UTC version resumed at 2:30 PM IST, and near
+            # local midnight the UTC date is still "yesterday" so "+1 day" landed on today.
+            tz = callbacks._tz()
+            start_min = callbacks.campaign_window(campaign)[0]
+            now_local = now.astimezone(tz)
+            nxt = datetime.combine(now_local.date() + timedelta(days=1),
+                                   dtime(start_min // 60, start_min % 60), tzinfo=tz)
         else:
             nxt = now + timedelta(hours=delay_h)
         fields["next_attempt_at"] = _iso(nxt)
@@ -102,7 +110,14 @@ async def _reap_calling(campaign, now):
         if rec:
             if rec.get("ended_at"):
                 outcome = rec.get("rsvp_outcome_status") or ("yes" if rec.get("booking_created") else None)
-                eo_db.cc_update(cc["id"], call_status="done", rsvp_outcome=outcome, last_call_id=rec.get("id"))
+                if outcome == "voicemail":
+                    # A machine answered — that's a NO-ANSWER, not a final outcome: keep the
+                    # voicemail marker + call link on the contact, then retry per the campaign
+                    # config exactly like a ring-out (attempts were already bumped at dial).
+                    eo_db.cc_update(cc["id"], rsvp_outcome="voicemail", last_call_id=rec.get("id"))
+                    _apply_failure(cc, campaign, now, error="voicemail")
+                else:
+                    eo_db.cc_update(cc["id"], call_status="done", rsvp_outcome=outcome, last_call_id=rec.get("id"))
             # else: still on the call — leave it as 'calling'
         elif (now - last).total_seconds() > ring_window:
             _apply_failure(cc, campaign, now, error="no answer")

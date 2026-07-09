@@ -71,6 +71,20 @@ def global_window():
             hhmm_to_min(os.getenv("EO_CALL_WINDOW_END", "21:00"), 1260))
 
 
+def campaign_window(campaign) -> tuple:
+    """(start_min, end_min) for a campaign row, with the standard 09:00–21:00 defaults.
+    The ONE place that parses call_start_min/call_end_min — the runner's resume math and
+    the admin's 'Waiting for calling hours' label must never disagree."""
+    def _m(v, default):
+        try:
+            return int(v) if v is not None else default
+        except (TypeError, ValueError):
+            return default
+    if not campaign:
+        return global_window()
+    return (_m(campaign.get("call_start_min"), 540), _m(campaign.get("call_end_min"), 1260))
+
+
 _WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
              "friday": 4, "saturday": 5, "sunday": 6}
 _DAYPARTS = {"morning": (10, 0), "afternoon": (15, 0), "evening": (18, 0),

@@ -19,6 +19,7 @@ import copy
 import json
 import logging
 import os
+import re
 import threading
 from datetime import datetime, timezone
 
@@ -151,7 +152,14 @@ def _matches(meta, filters):
         hay = " ".join(str(meta.get(k, "")) for k in
                        ("caller", "call_sid", "language", "status", "source")).lower()
         if q not in hay:
-            return False
+            # digit-normalized phone match: "98240 18000" / "98240-18000" still hits +919824018000
+            q_digits = re.sub(r"\D", "", q)
+            digits_hit = bool(q_digits) and q_digits in re.sub(r"\D", "", str(meta.get("caller") or ""))
+            # name match: callers whose CONTACT NAME matches q (the API passes the phone set,
+            # resolved from the contacts + campaign_contacts tables — names aren't on calls)
+            name_hit = (meta.get("caller") or "") in (filters.get("q_phones") or ())
+            if not digits_hit and not name_hit:
+                return False
     return True
 
 

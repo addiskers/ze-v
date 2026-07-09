@@ -72,9 +72,13 @@ input::placeholder { color: var(--muted); }
 input[type="date"], input[type="time"] { color-scheme: dark; }
 select {
   -webkit-appearance: none; appearance: none; padding-right: 32px; cursor: pointer;
+  color-scheme: dark;   /* native option popup renders dark instead of white-on-white */
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2393a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
   background-repeat: no-repeat; background-position: right 11px center;
 }
+/* fallback for browsers that don't honor color-scheme on the popup itself */
+select option { background: var(--card); color: var(--text); }
+select option:disabled { color: var(--muted); }
 label { font-size: 0.72rem; font-weight: 500; color: var(--secondary); display: block; margin-bottom: 7px; letter-spacing: 0; }
 
 .btn {

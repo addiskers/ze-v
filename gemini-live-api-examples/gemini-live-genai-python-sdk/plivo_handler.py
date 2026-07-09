@@ -844,8 +844,14 @@ class PlivoMediaBridge:
                 if now < self._hold_until:
                     continue                       # caller asked to hold — keep the line open
                 idle = now - self._last_activity
-                agent_quiet = (not self._turn_open and self._out_frames.empty()
-                               and not self._residual)
+                # _turn_open is cleared by Gemini's turn_complete — but with a text-triggered
+                # greeting and a caller whose speech never registers as a turn, that signal
+                # may NEVER come. Self-expire: if no agent audio has flowed for 3s and the
+                # queue is drained, the turn is over no matter what the flag says (otherwise
+                # the whole nudge ladder stays muzzled and only the 25s dead-air guard acts).
+                agent_quiet = (self._out_frames.empty() and not self._residual
+                               and (not self._turn_open
+                                    or now - self._last_agent_audio >= 3.0))
                 if self._rsvp_recorded and idle >= post_rsvp:
                     logger.info(f"Idle {idle:.0f}s after RSVP; scheduling hangup")
                     self._schedule_end(mute=False)   # if the agent does speak a farewell, let it play

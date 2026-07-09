@@ -10,6 +10,13 @@ from datetime import datetime, timezone
 from urllib.parse import quote, urlparse
 
 from dotenv import load_dotenv
+
+# Load .env BEFORE any app module is imported: store.py and eo_db.py resolve
+# DATA_DIR at IMPORT time, so a late load_dotenv() silently leaves them on the
+# default ./data folder (runtime readers like the Plivo creds still work, which
+# makes the misconfiguration very hard to spot — the app runs, with empty data).
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
@@ -30,9 +37,6 @@ import eo_api
 import eo_auth
 import eo_db
 import live
-
-# Load environment variables
-load_dotenv()
 
 # Configure logging - DEBUG for our modules, INFO for everything else
 logging.basicConfig(level=logging.INFO)

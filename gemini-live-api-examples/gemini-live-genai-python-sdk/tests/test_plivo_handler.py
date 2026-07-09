@@ -239,6 +239,78 @@ def test_silence_nudge_fires_once_then_escalates(monkeypatch):
     assert "Pratik" in still_there[0]
 
 
+# ── greeting watchdog: one firm push when Gemini stalls on the opening line ──
+
+def test_greeting_watchdog_pushes_exactly_once(monkeypatch):
+    monkeypatch.setenv("EO_GREETING_NUDGE_SECONDS", "0.5")
+
+    async def run():
+        b = _bridge()
+        b._greeting_sent_at = time.monotonic() - 5    # trigger sent, still no agent audio
+        task = asyncio.create_task(b._idle_hangup_guard())
+        await asyncio.sleep(2.3)                      # two+ guard ticks
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        msgs = []
+        while not b.text_input_queue.empty():
+            msgs.append(b.text_input_queue.get_nowait())
+        return msgs
+
+    msgs = asyncio.run(run())
+    assert sum("Speak your opening line" in m for m in msgs) == 1
+
+
+def test_greeting_watchdog_never_fires_after_audio_started(monkeypatch):
+    monkeypatch.setenv("EO_GREETING_NUDGE_SECONDS", "0.5")
+
+    async def run():
+        b = _bridge()
+        b._greeting_sent_at = time.monotonic() - 5
+        b._agent_audio_started = True                 # greeting already played
+        task = asyncio.create_task(b._idle_hangup_guard())
+        await asyncio.sleep(1.2)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        msgs = []
+        while not b.text_input_queue.empty():
+            msgs.append(b.text_input_queue.get_nowait())
+        return [m for m in msgs if "Speak your opening line" in m]
+
+    assert asyncio.run(run()) == []
+
+
+# ── silence nudge: cooldown + hard cap survive noise-blip flag resets ─────────
+
+def test_silence_nudge_respects_cooldown_after_noise_reset(monkeypatch):
+    monkeypatch.setenv("EO_SILENCE_CHECK", "true")
+    monkeypatch.setenv("EO_SILENCE_PROMPT_SECONDS", "0.2")
+    monkeypatch.setenv("EO_SILENCE_NUDGE_COOLDOWN_S", "60")
+
+    async def run():
+        b = _bridge()
+        b._agent_audio_started = True
+        t = time.monotonic()
+        b._last_agent_audio = t - 10
+        b._last_caller_audio = t - 10
+        b._last_activity = t - 10
+        # a nudge fired 1s ago; then a noise blip reset the flag
+        b._silence_nudged = False
+        b._silence_nudge_at = t - 1
+        b._silence_nudge_count = 1
+        task = asyncio.create_task(b._idle_hangup_guard())
+        await asyncio.sleep(1.5)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if b._pending_hangup_task:
+            b._pending_hangup_task.cancel()
+        msgs = []
+        while not b.text_input_queue.empty():
+            msgs.append(b.text_input_queue.get_nowait())
+        return [m for m in msgs if "still there" in m]
+
+    assert asyncio.run(run()) == []                   # cooldown blocks the re-ask
+
+
 # ── bounded input queue: drop-oldest, never blocks ───────────────────────────
 
 def test_put_audio_drops_oldest_on_overflow():

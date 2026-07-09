@@ -327,8 +327,11 @@ class PlivoMediaBridge:
         self._turn_open = False                  # a model turn is being generated (first audio may lag)
         self._silence_nudged = False             # "are you still there?" asked for the current quiet spell
         self._silence_nudge_at = 0.0             # when the nudge was injected
+        self._silence_nudge_count = 0            # total nudges this call (hard cap)
         self._silence_wrapup_at = 0.0            # when the wrap-up nudge was injected (0 = not yet)
         self._soft_end_at = 0.0                  # when a NON-muting hangup was scheduled (0 = none)
+        self._greeting_sent_at = 0.0             # when the opening trigger was queued (0 = not yet)
+        self._greeting_nudged = False            # the speak-NOW watchdog push was already sent
         # Noise squelch (EO_NOISE_GATE, default OFF): frames below the gate are replaced by
         # digital silence before Gemini hears them — NEVER dropped (the server VAD must
         # still hear ~silence_duration_ms of quiet to close a turn; a gap just stalls it).
@@ -442,6 +445,9 @@ class PlivoMediaBridge:
             return
         if not self._agent_audio_started:
             self._stop_connect_tone()            # first real agent audio → cut the connect ringback
+            if self._greeting_sent_at > 0.0:
+                logger.info(f"GREETING LATENCY: {time.monotonic() - self._greeting_sent_at:.2f}s "
+                            f"from trigger to first agent audio")
         if self._ending:
             return                               # call is wrapping up — never play a re-greet / extra audio
         if self._suppress_turn:
@@ -635,6 +641,7 @@ class PlivoMediaBridge:
                         else:
                             trigger = self.text_trigger
                         await self.text_input_queue.put(trigger)
+                        self._greeting_sent_at = time.monotonic()
                     else:
                         logger.info("Duplicate Plivo 'start' ignored (greeting already sent) — "
                                     "not re-triggering the opening")
@@ -813,10 +820,25 @@ class PlivoMediaBridge:
         nudge_on = os.getenv("EO_SILENCE_CHECK", "true").strip().lower() not in ("0", "false", "no", "off")
         nudge_x = _cfg("EO_SILENCE_PROMPT_SECONDS", 6.0)
         nudge_y = _cfg("EO_SILENCE_HANGUP_SECONDS", 10.0)
+        nudge_max = int(_cfg("EO_SILENCE_NUDGE_MAX", 2))
+        nudge_cooldown = _cfg("EO_SILENCE_NUDGE_COOLDOWN_S", 15.0)
+        greet_nudge_s = _cfg("EO_GREETING_NUDGE_SECONDS", 4.0)
         try:
             while True:
                 await asyncio.sleep(1.0)
                 now = time.monotonic()
+                # Greeting watchdog: Gemini occasionally stalls 5-7s on the opening line
+                # (server-side variance) while the member hears only the connect melody.
+                # One firm push after ~4s almost always unsticks the generation.
+                if (not self._agent_audio_started and not self._greeting_nudged
+                        and self._greeting_sent_at > 0.0
+                        and now - self._greeting_sent_at >= greet_nudge_s):
+                    self._greeting_nudged = True
+                    logger.info(f"Greeting not spoken after {now - self._greeting_sent_at:.1f}s; "
+                                f"pushing the agent to speak")
+                    await self.text_input_queue.put(
+                        "[Speak your opening line NOW — the member is waiting on a silent line.]")
+                    continue
                 if self._pending_hangup_task and not self._pending_hangup_task.done():
                     continue                       # already ending
                 if now < self._hold_until:
@@ -832,12 +854,17 @@ class PlivoMediaBridge:
                         and not self._ending and agent_quiet:
                     quiet_for = now - max(self._last_caller_audio, self._last_agent_audio,
                                           self._last_activity)
-                    if not self._silence_nudged and quiet_for >= nudge_x:
+                    if (not self._silence_nudged and quiet_for >= nudge_x
+                            and self._silence_nudge_count < nudge_max
+                            and (self._silence_nudge_at == 0.0
+                                 or now - self._silence_nudge_at >= nudge_cooldown)):
                         self._silence_nudged = True
                         self._silence_nudge_at = now
+                        self._silence_nudge_count += 1
                         who = f"'{self.first_name}, are you still there? I can't hear you.'" \
                             if self.first_name else "'Hello — are you still there? I can't hear you.'"
-                        logger.info(f"Quiet for {quiet_for:.0f}s; injecting are-you-still-there nudge")
+                        logger.info(f"Quiet for {quiet_for:.0f}s; injecting are-you-still-there nudge "
+                                    f"({self._silence_nudge_count}/{nudge_max})")
                         await self.text_input_queue.put(
                             f"[The line has gone quiet — warmly ask ONCE, {who} Then wait silently.]")
                         continue

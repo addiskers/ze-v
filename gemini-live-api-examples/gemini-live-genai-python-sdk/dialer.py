@@ -106,5 +106,10 @@ async def hangup_call(call_uuid):
         logger.warning(f"Hangup timed out for {call_uuid}")
         return {"error": "hangup timeout"}
     except Exception as e:
-        logger.error(f"Hangup failed for {call_uuid}: {e}")
+        if "not found" in str(e).lower():
+            # normal: the caller already hung up, so the call no longer exists on
+            # Plivo's side — our best-effort hangup has nothing left to do
+            logger.info(f"Hangup skipped for {call_uuid}: call already ended")
+        else:
+            logger.error(f"Hangup failed for {call_uuid}: {e}")
         return {"error": str(e)}

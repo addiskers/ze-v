@@ -1,9 +1,6 @@
-// ===========================================================================
-// EO Gujarat — "An Evening with Radha"  (browser client)
-// Talks to the FastAPI server over /ws, which proxies the Gemini Live API.
-// ===========================================================================
+// EO Gujarat — "An Evening with Radha" browser client. Talks to the FastAPI server over /ws, which proxies the Gemini Live API.
 
-// ---- DOM ----
+// DOM
 const statusDiv = document.getElementById("status");
 const statusText = statusDiv.querySelector(".status-text");
 const authSection = document.getElementById("auth-section");
@@ -36,7 +33,7 @@ const callSummary = document.getElementById("call-summary");
 const GREETING_TRIGGER =
   "[The guest has just answered the call. Greet them now with your invitation.]";
 
-// ---- State ----
+// State
 let callStartTime = null;
 let callTimerInterval = null;
 let orbRAF = null;
@@ -91,7 +88,7 @@ const geminiClient = new GeminiClient({
   },
 });
 
-// ---- Helpers ----
+// Helpers
 function setStatus(cls, text) {
   statusDiv.className = "status-badge " + cls;
   statusText.textContent = text;
@@ -112,7 +109,7 @@ function nowTime() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-// ---- Timer ----
+// Timer
 function startTimer() {
   stopTimer();
   callStartTime = Date.now();
@@ -136,7 +133,7 @@ function getCallDuration() {
   return callStartTime ? formatDuration(Date.now() - callStartTime) : "00:00";
 }
 
-// ---- Transcript ----
+// Transcript
 function appendMessage(role, text) {
   const empty = chatLog.querySelector(".transcript-empty");
   if (empty) empty.remove();
@@ -177,7 +174,7 @@ function endTurns() {
   currentGeminiMsg = null;
 }
 
-// ---- RSVP ----
+// RSVP
 function renderRSVP(result) {
   rsvpData = {
     attending: !!(result && result.attending),
@@ -198,7 +195,7 @@ function renderRSVP(result) {
   }
 }
 
-// ---- Message handling ----
+// Message handling
 function handleJsonMessage(msg) {
   switch (msg.type) {
     case "status":
@@ -230,7 +227,7 @@ function handleJsonMessage(msg) {
   }
 }
 
-// ---- Orb visualizer ----
+// Orb visualizer
 let orbCtx = null;
 let orbDpr = 1;
 const orbCanvas = document.getElementById("radha-orb");
@@ -313,7 +310,7 @@ function stopOrb() {
   window.removeEventListener("resize", resizeOrb);
 }
 
-// ---- Connect / mic / end ----
+// Connect / mic / end
 connectBtn.onclick = async () => {
   setStatus("connecting", "Connecting…");
   connectBtn.disabled = true;
@@ -358,7 +355,7 @@ micBtn.onclick = async () => {
 
 disconnectBtn.onclick = () => geminiClient.disconnect();
 
-// ---- Text input (optional) ----
+// Text input (optional)
 sendBtn.onclick = sendText;
 textInput.onkeypress = (e) => {
   if (e.key === "Enter") sendText();
@@ -373,7 +370,7 @@ function sendText() {
   }
 }
 
-// ---- Session end ----
+// Session end
 function showSessionEnd() {
   if (sessionEnded) return;
   sessionEnded = true;
@@ -435,7 +432,7 @@ function summaryItem(k, v) {
   return `<div class="summary-item"><span class="k">${escapeHtml(k)}</span><span class="v">${escapeHtml(v)}</span></div>`;
 }
 
-// ---- Reset ----
+// Reset
 function resetUI() {
   stopTimer();
   stopOrb();
@@ -468,9 +465,7 @@ function resetUI() {
 
 restartBtn.onclick = resetUI;
 
-// ===========================================================================
-// "Call me on my phone" (Twilio outbound) — unchanged backend contract
-// ===========================================================================
+// "Call me on my phone" (Twilio outbound)
 const phoneInput = document.getElementById("phoneInput");
 const callMeBtn = document.getElementById("callMeBtn");
 const callMeStatus = document.getElementById("callMeStatus");

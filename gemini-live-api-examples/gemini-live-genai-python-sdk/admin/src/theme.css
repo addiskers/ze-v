@@ -1,4 +1,4 @@
-/* EO AI Calling Platform — dark theme, green primary accent. Crisp design pass. */
+/* EO AI Calling Platform — dark theme, green primary accent. */
 :root {
   --bg: #080b12;
   --bg-2: #0a0e17;
@@ -56,7 +56,7 @@ h1, h2, h3 { letter-spacing: -0.02em; }
 *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); background-clip: padding-box; }
 :focus-visible { outline: none; box-shadow: var(--ring); border-radius: 8px; }
 
-/* ── inputs / buttons ─────────────────────────────────────────────── */
+/* Inputs / buttons */
 input, select, textarea {
   font-family: inherit; font-size: 0.85rem; color: var(--text);
   background: rgba(255, 255, 255, 0.03);
@@ -98,7 +98,7 @@ label { font-size: 0.72rem; font-weight: 500; color: var(--secondary); display: 
 .btn.danger:hover { background: rgba(248,113,113,0.2); filter: none; }
 .btn.sm { height: 31px; padding: 0 11px; font-size: 0.75rem; border-radius: 8px; }
 
-/* ── app shell ────────────────────────────────────────────────────── */
+/* App shell */
 .shell { display: flex; min-height: 100vh; background: radial-gradient(1200px 600px at 70% -10%, rgba(16,185,129,0.05), transparent 60%), var(--bg); }
 .sidebar {
   width: var(--sidebar-w); flex: 0 0 var(--sidebar-w); background: var(--bg-2);
@@ -145,7 +145,7 @@ label { font-size: 0.72rem; font-weight: 500; color: var(--secondary); display: 
 }
 .content { padding: 26px; flex: 1 1 auto; max-width: 1400px; width: 100%; }
 
-/* ── page header ──────────────────────────────────────────────────── */
+/* Page header */
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
 .page-h1 { margin: 0; font-size: 1.35rem; font-weight: 700; }
 .page-desc { margin: 5px 0 0; font-size: 0.83rem; color: var(--muted); }
@@ -153,7 +153,7 @@ label { font-size: 0.72rem; font-weight: 500; color: var(--secondary); display: 
 .backlink { display: inline-flex; align-items: center; gap: 5px; font-size: 0.76rem; color: var(--muted); margin-bottom: 8px; transition: color .12s; }
 .backlink:hover { color: var(--green-2); }
 
-/* ── cards / stats ────────────────────────────────────────────────── */
+/* Cards / stats */
 .grid { display: grid; gap: 16px; }
 .stat-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
 .card, .panel {
@@ -169,7 +169,7 @@ a.card:hover, .card.clickable:hover { border-color: var(--border-strong); backgr
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .panel-head h3 { margin: 0; font-size: 0.95rem; font-weight: 700; }
 
-/* ── toolbar (filters) ────────────────────────────────────────────── */
+/* Toolbar (filters) */
 .toolbar { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin-bottom: 16px; }
 .toolbar input, .toolbar select { width: auto; min-width: 140px; height: 36px; }
 .search { position: relative; }
@@ -177,7 +177,7 @@ a.card:hover, .card.clickable:hover { border-color: var(--border-strong); backgr
 .search .ic { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); opacity: .5; pointer-events: none; }
 .spacer { flex: 1 1 auto; }
 
-/* ── tables ───────────────────────────────────────────────────────── */
+/* Tables */
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow); }
 table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
 thead th {
@@ -198,7 +198,7 @@ td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numer
 
 input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--green); cursor: pointer; vertical-align: middle; }
 
-/* ── pills ────────────────────────────────────────────────────────── */
+/* Pills */
 .pill {
   display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px;
   font-size: 0.68rem; font-weight: 600; text-transform: capitalize; white-space: nowrap;
@@ -211,21 +211,21 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--green); 
 .pill.src { background: rgba(148, 163, 184, .12); color: var(--secondary); border-color: var(--border); }
 .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 6px currentColor; }
 
-/* ── pagination ───────────────────────────────────────────────────── */
+/* Pagination */
 .pager { display: flex; align-items: center; gap: 8px; justify-content: flex-end; margin-top: 15px; font-size: 0.78rem; color: var(--secondary); }
 .pager > span:first-child { margin-right: auto; color: var(--muted); }
 .pager button { height: 30px; padding: 0 11px; border-radius: 8px; border: 1px solid var(--border-strong); background: rgba(255,255,255,0.02); color: var(--text-2); cursor: pointer; transition: background .12s; }
 .pager button:hover:not(:disabled) { background: rgba(255,255,255,0.06); }
 .pager button:disabled { opacity: .38; cursor: not-allowed; }
 
-/* ── toggle ───────────────────────────────────────────────────────── */
+/* Toggle */
 .toggle { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; font-size: 0.78rem; font-weight: 500; color: var(--secondary); }
 .toggle .track { width: 40px; height: 23px; border-radius: 999px; background: rgba(255,255,255,.1); position: relative; transition: background .16s; }
 .toggle .track.on { background: var(--green); box-shadow: 0 0 14px -2px var(--green); }
 .toggle .knob { position: absolute; top: 2.5px; left: 2.5px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .16s; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
 .toggle .track.on .knob { left: 19px; }
 
-/* ── upload dropzone ──────────────────────────────────────────────── */
+/* Upload dropzone */
 .dropzone {
   border: 1.5px dashed var(--border-strong); border-radius: var(--radius); padding: 36px; text-align: center;
   transition: border-color .15s, background .15s; cursor: pointer; background: rgba(255,255,255,0.012);
@@ -235,7 +235,7 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--green); 
 .dropzone .big { font-size: 0.95rem; font-weight: 600; margin: 8px 0 4px; }
 .dropzone .hint { font-size: 0.76rem; color: var(--muted); }
 
-/* ── modal ────────────────────────────────────────────────────────── */
+/* Modal */
 .backdrop { position: fixed; inset: 0; background: rgba(4,6,10,.66); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); z-index: 50; display: grid; place-items: center; padding: 20px; animation: fade .12s ease-out; }
 .modal { background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 16px; width: 100%; max-width: 460px; padding: 24px; box-shadow: var(--shadow-lg); animation: pop .16s ease-out; }
 .modal h3 { margin: 0 0 3px; font-size: 1.1rem; }
@@ -246,14 +246,14 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--green); 
 @keyframes pop { from { transform: scale(.97) translateY(4px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 
-/* ── login ────────────────────────────────────────────────────────── */
+/* Login */
 .login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 20px; background: radial-gradient(900px 500px at 50% -10%, rgba(16,185,129,0.08), transparent 60%), var(--bg); }
 .login-card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 36px 32px; width: 100%; max-width: 386px; box-shadow: var(--shadow-lg); }
 .login-card .brand { justify-content: center; padding: 0 0 20px; }
 .login-card .row { margin-bottom: 15px; }
 .login-card .err { color: #fca5a5; font-size: 0.8rem; margin-bottom: 12px; }
 
-/* ── misc ─────────────────────────────────────────────────────────── */
+/* Misc */
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; box-shadow: 0 0 8px var(--green); animation: pulse 2s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 .muted { color: var(--muted); }

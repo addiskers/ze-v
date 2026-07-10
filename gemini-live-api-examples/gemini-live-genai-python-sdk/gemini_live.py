@@ -10,12 +10,7 @@ logger = logging.getLogger(__name__)
 from google import genai
 from google.genai import types
 
-# Async ("non-blocking") function calling lets a tool result be added to the
-# conversation WITHOUT prompting a fresh generation. We use it to make record_rsvp
-# truly silent so the model never re-speaks its reply after the tool returns (the
-# double-reply bug). These primitives only exist in google-genai >= 2.x; on older
-# installs (e.g. 1.14.0) they are absent, so we feature-detect and fall back to a
-# plain blocking tool result carried by the prompt + tool-result instruction.
+# NON_BLOCKING + SILENT function calling (the record_rsvp double-reply fix) exists only in google-genai >= 2.x; feature-detect and fall back to a blocking tool result on older SDKs.
 try:
     _NONBLOCKING_BEHAVIOR = types.Behavior.NON_BLOCKING
     _SILENT_SCHEDULING = types.FunctionResponseScheduling.SILENT
@@ -186,12 +181,7 @@ TOOLS = [
     }
 ]
 
-# record_rsvp is made NON_BLOCKING + SILENT when the SDK supports it (server google-genai >= 2.x):
-# the tool result is then added WITHOUT prompting/continuing a turn, so the model can never tack on a
-# second closing ("...tenth!Oh, lovely!...tenth!") or read out meta ("Your turn completed."). The old
-# mute risk (recording without speaking → dead air) is handled at the bridge instead: if record_rsvp
-# fires and the agent hasn't spoken this turn, plivo_handler nudges it to speak its one closing.
-# On an old SDK (<2.x) the feature-detect leaves both None and we fall back to the blocking path.
+# NON_BLOCKING record_rsvp: the tool result no longer forces a turn (prevents a doubled closing); if the agent records without speaking, plivo_handler nudges it to speak.
 if _NONBLOCKING_BEHAVIOR is not None:
     for _t in TOOLS:
         if _t.get("name") == "record_rsvp":
@@ -220,9 +210,7 @@ class GeminiLive:
         self.tool_mapping = tool_mapping or {}
 
     async def start_session(self, audio_input_queue, video_input_queue, text_input_queue, audio_output_callback, audio_interrupt_callback=None):
-        # Server-side VAD knobs, env-tunable so prod can trade end-of-turn latency vs
-        # not-cutting-slow-speakers WITHOUT a code change. silence_duration_ms is the
-        # single biggest lever on perceived reply delay.
+        # Server-side VAD knobs, env-tunable; silence_duration_ms is the biggest lever on perceived reply latency.
         def _env_int(name, default):
             try:
                 return int(os.getenv(name, str(default)))
@@ -331,7 +319,6 @@ class GeminiLive:
                                     ],
                                 })
 
-                            # Log the raw response type for debugging
                             if response.go_away:
                                 logger.warning(f"Received GoAway from Gemini: {response.go_away}")
                                 await event_queue.put({"type": "go_away"})
@@ -388,10 +375,7 @@ class GeminiLive:
                                         except Exception as e:
                                             result = f"Error: {e}"
 
-                                        # record_rsvp: schedule the result SILENTLY (when supported) so it
-                                        # never prompts/continues a turn — that's what stops the doubled
-                                        # closing. The bridge nudges the model to speak if it recorded in
-                                        # silence (mute-proof). end_call and the <2.x fallback stay blocking.
+                                        # Schedule record_rsvp's result SILENT (when supported) so it never continues a turn (the doubled-closing fix); end_call and the <2.x fallback stay blocking.
                                         fr_kwargs = {"name": func_name, "id": fc.id, "response": {"result": result}}
                                         if func_name == "record_rsvp" and _SILENT_SCHEDULING is not None:
                                             fr_kwargs["scheduling"] = _SILENT_SCHEDULING
@@ -406,8 +390,7 @@ class GeminiLive:
 
                                 if function_responses:
                                     await session.send_tool_response(function_responses=function_responses)
-                                # Signal the caller (phone bridge / browser) to hang up
-                                # AFTER the agent's goodbye audio has been emitted.
+                                # Signal the caller to hang up only after the goodbye audio has been emitted.
                                 if end_requested:
                                     await event_queue.put({"type": "end_call"})
 
@@ -434,7 +417,7 @@ class GeminiLive:
                     if event is None:
                         break
                     if isinstance(event, dict) and event.get("type") == "error":
-                        # Just yield the error event, don't raise to keep the stream alive if possible or let caller handle
+                        # Yield the error event instead of raising so the caller can handle it.
                         yield event
                         break
                     yield event

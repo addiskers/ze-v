@@ -1,7 +1,4 @@
-/* =========================================================================
-   EO Gujarat — "An Evening with Radha"
-   Premium invitation experience. Midnight navy + gold + sapphire blue.
-   ========================================================================= */
+/* EO Gujarat — "An Evening with Radha" invitation UI: midnight navy + gold + sapphire blue */
 
 :root {
   --bg-0: #070b18;
@@ -72,7 +69,7 @@ body::before {
 
 .app-shell { position: relative; z-index: 1; display: flex; flex-direction: column; min-height: 100vh; }
 
-/* ===================== TOP BAR ===================== */
+/* Top bar */
 .top-bar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 26px;
@@ -116,11 +113,11 @@ body::before {
   letter-spacing: 0.12em; text-transform: uppercase;
 }
 
-/* ===================== SCREENS ===================== */
+/* Screens */
 .screen { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px 20px; overflow-y: auto; }
 #app-section { align-items: flex-start; padding-top: 26px; padding-bottom: 124px; }
 
-/* ===================== PRE-CALL / INVITE ===================== */
+/* Pre-call / invite */
 .invite-card {
   max-width: 520px; width: 100%; padding: 40px 36px 30px; text-align: center;
   animation: rise 0.7s ease-out; border: 1px solid var(--glass-border); position: relative; overflow: hidden;
@@ -188,7 +185,7 @@ body::before {
 .call-me-status.error { color: var(--danger); }
 .call-me-status.loading { color: var(--gold); }
 
-/* ===================== ACTIVE CALL ===================== */
+/* Active call */
 .call-stage { width: 100%; max-width: 1080px; display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 18px; align-items: stretch; }
 .stage-left { display: flex; flex-direction: column; gap: 16px; }
 .orb-panel { flex: 1; min-height: 380px; padding: 28px; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; overflow: hidden; }
@@ -244,7 +241,7 @@ body::before {
 .btn-send { width: 40px; height: 40px; border-radius: var(--r-sm); border: none; background: var(--gold); color: var(--bg-0); cursor: pointer; display: grid; place-items: center; transition: all var(--t-fast); }
 .btn-send:hover { background: var(--gold-soft); transform: scale(1.05); }
 
-/* ===================== CONTROLS BAR ===================== */
+/* Controls bar */
 .controls-bar { position: fixed; bottom: max(22px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 18px; padding: 12px 22px; z-index: 100; border: 1px solid var(--glass-border); }
 .ctrl-btn { width: 54px; height: 54px; border-radius: 50%; border: 1px solid var(--glass-border-soft); background: rgba(255,255,255,0.05); color: var(--text-1); cursor: pointer; display: grid; place-items: center; transition: all var(--t-fast); position: relative; }
 .ctrl-btn:hover { background: rgba(255,255,255,0.1); color: var(--text-0); }
@@ -256,7 +253,7 @@ body::before {
 .ctrl-btn-danger { background: rgba(239,68,68,0.16); color: var(--danger); border-color: rgba(239,68,68,0.32); }
 .ctrl-btn-danger:hover { background: rgba(239,68,68,0.26); box-shadow: 0 0 16px rgba(239,68,68,0.22); }
 
-/* ===================== SESSION END ===================== */
+/* Session end */
 .end-card { max-width: 560px; width: 100%; padding: 38px 34px; text-align: center; animation: rise 0.6s ease-out; max-height: 88vh; overflow-y: auto; border: 1px solid var(--glass-border); }
 .end-emoji { font-size: 3.2rem; line-height: 1; margin-bottom: 12px; }
 .end-card h2 { font-family: var(--font-serif); font-size: 1.9rem; font-weight: 700; margin-bottom: 6px; }
@@ -290,12 +287,12 @@ body::before {
 .btn-restart { display: inline-flex; align-items: center; gap: 9px; margin-top: 24px; padding: 13px 26px; border: none; border-radius: var(--r-full); cursor: pointer; background: linear-gradient(135deg, var(--gold-soft), var(--gold-deep)); color: var(--bg-0); font-family: var(--font-sans); font-size: 0.9rem; font-weight: 700; transition: transform var(--t-fast), box-shadow var(--t-fast); }
 .btn-restart:hover { transform: scale(1.04); box-shadow: 0 0 22px rgba(233, 196, 106, 0.4); }
 
-/* ===================== ANIMATIONS ===================== */
+/* Animations */
 @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 @keyframes ripple { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(1.7); opacity: 0; } }
 @keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
 
-/* ===================== RESPONSIVE ===================== */
+/* Responsive */
 @media (max-width: 900px) {
   .call-stage { grid-template-columns: 1fr; max-width: 560px; }
   .orb-panel { min-height: 300px; }

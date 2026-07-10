@@ -25,7 +25,7 @@ _TOKEN_TTL = int(os.getenv("EO_SESSION_TTL", str(60 * 60 * 24 * 14)))  # 14 days
 _SCRYPT = dict(n=16384, r=8, p=1, dklen=32)
 
 
-# ── password hashing ─────────────────────────────────────────────────────────
+# Password hashing
 def hash_password(password: str, salt_hex: str | None = None) -> tuple[str, str]:
     salt = bytes.fromhex(salt_hex) if salt_hex else secrets.token_bytes(16)
     dk = hashlib.scrypt(password.encode(), salt=salt, **_SCRYPT)
@@ -41,7 +41,7 @@ def verify_password(password: str, hash_hex: str, salt_hex: str) -> bool:
         return False
 
 
-# ── signed token ─────────────────────────────────────────────────────────────
+# Signed token
 def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
@@ -71,7 +71,7 @@ def verify_token(token: str) -> dict | None:
         return None
 
 
-# ── seed + login ─────────────────────────────────────────────────────────────
+# Seed + login
 def seed_admin() -> None:
     """Create the first eo_admin from env if the users table is empty."""
     if eo_db.count_users() > 0:
@@ -94,13 +94,12 @@ def authenticate(username: str, password: str) -> dict | None:
     return user
 
 
-# ── FastAPI dependencies ─────────────────────────────────────────────────────
+# FastAPI dependencies
 def _token_from_request(request: Request) -> str:
     auth = request.headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
-    # cookie or ?token= (the latter lets an <audio>/<a> element authenticate, since
-    # those can't send an Authorization header — used for streaming call recordings).
+    # cookie or ?token= — lets <audio>/<a> elements authenticate (no Authorization header) when streaming call recordings
     return request.cookies.get("eo_session", "") or request.query_params.get("token", "")
 
 

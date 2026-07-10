@@ -91,7 +91,7 @@ def main():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
 
-    # ---- resolve campaigns by name -----------------------------------------
+    # Resolve campaigns by name
     campaigns = [r for r in conn.execute("SELECT * FROM campaigns")
                  if (r["name"] or "").strip().lower() in camp_names]
     camp_ids = {r["id"] for r in campaigns}
@@ -99,7 +99,7 @@ def main():
     for m in sorted(missing):
         print(f"NOTE: no campaign named '{m}' found — skipping that name")
 
-    # ---- collect call JSONs to delete ---------------------------------------
+    # Collect call JSONs to delete
     doomed_calls = []           # (path, call_sid, caller, campaign_id, started_at)
     if os.path.isdir(CALLS_DIR):
         for name in sorted(os.listdir(CALLS_DIR)):
@@ -124,13 +124,13 @@ def main():
         if p and os.path.isfile(p):
             recordings.append(p)
 
-    # ---- collect DB rows -----------------------------------------------------
+    # Collect DB rows
     cc_rows = [r for r in conn.execute("SELECT * FROM campaign_contacts")
                if r["campaign_id"] in camp_ids or digits(r["phone"]) in phone_keys]
     pool_rows = ([r for r in conn.execute("SELECT * FROM contacts")
                   if digits(r["phone"]) in phone_keys] if args.purge_contact else [])
 
-    # ---- report --------------------------------------------------------------
+    # Report
     print(f"\nDATA_DIR: {DATA_DIR}")
     print(f"\nCampaigns to delete ({len(campaigns)}):")
     for r in campaigns:
@@ -160,7 +160,7 @@ def main():
         print("\nDRY RUN — nothing deleted. Re-run with --apply to back up and delete.")
         return
 
-    # ---- backup, then delete -------------------------------------------------
+    # Backup, then delete
     out = backup(os.path.join(DATA_DIR, "backups"))
     print(f"\nBackup written: {out}")
 

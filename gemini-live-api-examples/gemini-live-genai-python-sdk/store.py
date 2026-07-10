@@ -49,8 +49,7 @@ _HEAVY_FIELDS = ("transcript", "tool_calls")
 
 
 def _meta_from_call(call):
-    # Deep-copy so the in-memory index never aliases mutable nested dicts
-    # (e.g. `callback`, `tokens`, `twilio`) that live callers may still mutate.
+    # Deep-copy so the in-memory index never aliases nested dicts callers may still mutate
     return copy.deepcopy({k: v for k, v in call.items() if k not in _HEAVY_FIELDS})
 
 
@@ -58,7 +57,7 @@ def _path(call_id):
     return os.path.join(CALLS_DIR, f"{call_id}.json")
 
 
-# ---- sync internals (run inside executor) ----------------------------------
+# Sync internals (run inside executor)
 
 def _init_sync():
     os.makedirs(CALLS_DIR, exist_ok=True)
@@ -98,7 +97,7 @@ def _load_sync(call_id):
         return None
 
 
-# ---- async public API ------------------------------------------------------
+# Async public API
 
 async def _run(fn, *args):
     loop = asyncio.get_running_loop()
@@ -299,7 +298,7 @@ async def sweep_stale(max_age_minutes=30):
             logger.info(f"Marked stale call {cid} as abandoned")
 
 
-# ---- callbacks -------------------------------------------------------------
+# Callbacks
 
 def _parse_iso(s):
     try:
@@ -375,7 +374,7 @@ async def reset_orphaned_callbacks():
         logger.info(f"Reset orphaned callback {cid} -> {cb['status']}")
 
 
-# ---- scheduler state (durable circuit-breaker etc.) ------------------------
+# Scheduler state (durable circuit-breaker)
 
 def _load_sched_state_sync():
     try:

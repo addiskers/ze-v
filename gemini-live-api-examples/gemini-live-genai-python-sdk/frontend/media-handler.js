@@ -14,7 +14,6 @@ class MediaHandler {
     this.videoCanvas = document.createElement("canvas");
     this.canvasCtx = this.videoCanvas.getContext("2d");
 
-    // Analyser nodes for visualization
     this.inputAnalyser = null;
     this.outputAnalyser = null;
     this.outputGain = null;
@@ -31,7 +30,6 @@ class MediaHandler {
         "/static/pcm-processor.js"
       );
 
-      // Set up output analyser chain: analyser -> gain -> destination
       this.outputAnalyser = this.audioContext.createAnalyser();
       this.outputAnalyser.fftSize = 256;
       this.outputAnalyser.smoothingTimeConstant = 0.8;
@@ -58,7 +56,6 @@ class MediaHandler {
         this.mediaStream
       );
 
-      // Set up input analyser
       this.inputAnalyser = this.audioContext.createAnalyser();
       this.inputAnalyser.fftSize = 256;
       this.inputAnalyser.smoothingTimeConstant = 0.8;
@@ -81,7 +78,7 @@ class MediaHandler {
         }
       };
 
-      // Route: source -> inputAnalyser -> worklet -> muteGain -> destination
+      // Zero-gain sink keeps the worklet pulled by the graph without echoing mic input
       this.inputAnalyser.connect(this.audioWorkletNode);
       const muteGain = this.audioContext.createGain();
       muteGain.gain.value = 0;
@@ -190,7 +187,6 @@ class MediaHandler {
 
   playAudio(arrayBuffer) {
     if (!this.audioContext) return;
-    // Drop audio chunks that arrive right after an interrupt
     if (this.playbackMuted) return;
 
     if (this.audioContext.state === "suspended") {
@@ -209,7 +205,6 @@ class MediaHandler {
     const source = this.audioContext.createBufferSource();
     source.buffer = buffer;
 
-    // Route through output analyser for visualization
     if (this.outputAnalyser) {
       source.connect(this.outputAnalyser);
     } else {
@@ -229,7 +224,6 @@ class MediaHandler {
   }
 
   stopAudioPlayback() {
-    // Mute playback to drop any audio chunks still in-flight from server
     this.playbackMuted = true;
 
     this.scheduledSources.forEach((s) => {
@@ -243,7 +237,7 @@ class MediaHandler {
       this.nextStartTime = this.audioContext.currentTime;
     }
 
-    // Un-mute after a short delay so new (post-interrupt) audio can play
+    // Stay muted briefly so server audio chunks still in flight after the interrupt are dropped.
     setTimeout(() => {
       this.playbackMuted = false;
     }, 300);
@@ -257,7 +251,6 @@ class MediaHandler {
     return this.outputAnalyser;
   }
 
-  // Utils
   downsampleBuffer(buffer, sampleRate, outSampleRate) {
     if (outSampleRate === sampleRate) return buffer;
     const ratio = sampleRate / outSampleRate;

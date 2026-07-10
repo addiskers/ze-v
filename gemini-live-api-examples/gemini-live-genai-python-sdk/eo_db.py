@@ -131,19 +131,13 @@ def init() -> None:
         if "remark" not in contact_cols:
             conn.execute("ALTER TABLE contacts ADD COLUMN remark TEXT")
         if "created_by" not in contact_cols:
-            # Per-user contact pools: rebuild the table so UNIQUE moves from (phone) to
-            # (created_by, phone), and hand every legacy row to the seed Superadmin —
-            # NEVER leave created_by NULL (NULLs are pairwise distinct in a SQLite unique
-            # index, so a NULL-owned row would never upsert and re-imports would duplicate).
+            # Rebuild moves UNIQUE(phone) → UNIQUE(created_by, phone); legacy rows get the seed Superadmin — a NULL owner would never upsert (NULLs are distinct in SQLite unique indexes).
             owner_row = conn.execute(
                 "SELECT id FROM users WHERE role = 'eo_admin' ORDER BY id ASC LIMIT 1").fetchone()
             if owner_row is None:
                 owner_row = conn.execute("SELECT id FROM users ORDER BY id ASC LIMIT 1").fetchone()
             legacy_owner = int(owner_row["id"]) if owner_row is not None else 1
-            # CRASH-ATOMIC: python sqlite3's legacy autocommit implicitly commits before
-            # each DDL statement, so a kill between RENAME and the copy would strand the
-            # whole pool in contacts_legacy (the next boot recreates an EMPTY contacts and
-            # skips this branch). Run the rebuild as ONE real SQLite transaction instead.
+            # One real transaction: sqlite3's legacy autocommit commits before each DDL, so a crash mid-rebuild would strand the pool in contacts_legacy
             old_isolation = conn.isolation_level
             conn.isolation_level = None          # manual transaction control
             try:
@@ -180,7 +174,7 @@ def init() -> None:
         conn.commit()
 
 
-# ── generic helpers ──────────────────────────────────────────────────────────
+# Generic helpers
 def _rows(sql: str, params: tuple = ()) -> list[dict]:
     conn = get_conn()
     with _lock:
@@ -201,7 +195,7 @@ def _exec(sql: str, params: tuple = ()) -> int:
         return cur.lastrowid
 
 
-# ── users ────────────────────────────────────────────────────────────────────
+# Users
 def count_users() -> int:
     r = _one("SELECT COUNT(*) c FROM users")
     return int(r["c"]) if r else 0
@@ -237,7 +231,7 @@ def update_user_password(user_id: int, password_hash: str, password_salt: str) -
           (password_hash, password_salt, _now(), int(user_id)))
 
 
-# ── contacts (global pool) ───────────────────────────────────────────────────
+# Contacts (global pool)
 _CONTACT_SORTS = {"name", "phone", "source", "status", "created_at"}
 
 
@@ -361,7 +355,7 @@ def set_contact_remark(contact_id: int, remark: str) -> None:
           (remark, _now(), int(contact_id)))
 
 
-# ── campaigns ────────────────────────────────────────────────────────────────
+# Campaigns
 _CAMPAIGN_SORTS = {"name", "status", "start_at", "contact_count", "created_at"}
 
 
@@ -456,7 +450,7 @@ def cancel_campaign(campaign_id: int) -> bool:
         return cur.rowcount > 0
 
 
-# ── campaign runner support (used by campaign_runner.py) ─────────────────────
+# Campaign runner support (used by campaign_runner.py)
 def promote_due_campaigns(now_iso: str) -> int:
     """Flip scheduled campaigns whose start time has arrived to 'live'."""
     conn = get_conn()
@@ -584,7 +578,7 @@ def cc_set_outcome_by_phone(campaign_id: int, phone: str, outcome: str,
         return cur.rowcount
 
 
-# ── campaigns: read helpers for call-log labelling ───────────────────────────
+# Campaigns: read helpers for call-log labelling
 def get_campaign(campaign_id: int) -> dict | None:
     return _one("SELECT * FROM campaigns WHERE id = ?", (int(campaign_id),))
 

@@ -11,10 +11,7 @@ from urllib.parse import quote, urlparse
 
 from dotenv import load_dotenv
 
-# Load .env BEFORE any app module is imported: store.py and eo_db.py resolve
-# DATA_DIR at IMPORT time, so a late load_dotenv() silently leaves them on the
-# default ./data folder (runtime readers like the Plivo creds still work, which
-# makes the misconfiguration very hard to spot — the app runs, with empty data).
+# Load .env before app modules are imported: store.py and eo_db.py resolve DATA_DIR at import time.
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -38,13 +35,11 @@ import eo_auth
 import eo_db
 import live
 
-# Configure logging - DEBUG for our modules, INFO for everything else
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("gemini_live").setLevel(logging.INFO)
 logging.getLogger(__name__).setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configuration
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 MODEL = os.getenv("MODEL", "gemini-3.1-flash-live-preview")
 PLIVO_AUTH_ID = os.getenv("PLIVO_AUTH_ID")
@@ -52,7 +47,7 @@ PLIVO_AUTH_TOKEN = os.getenv("PLIVO_AUTH_TOKEN")
 PLIVO_FROM_NUMBER = os.getenv("PLIVO_FROM_NUMBER", "")
 ANALYTICS_SECRET = os.getenv("ANALYTICS_SECRET", "eo2026")
 
-# ============ EVENT / GUEST DATA ============
+# Event / guest data
 
 EVENT = {
     "host": "EO Gujarat",
@@ -67,9 +62,7 @@ def handle_record_rsvp(**kwargs):
     note = (kwargs.get("note") or "").strip().lower()
     vm_markers = ("voicemail", "voice mail", "answering machine", "answer machine")
     if status not in ("yes", "no", "callback", "voicemail", "do_not_contact", "wrong_number"):
-        # Unknown status: machine-answer wording maps to "voicemail"; else "yes" only if
-        # the legacy `attending` boolean is set; otherwise "callback" — a recoverable
-        # outcome (someone re-dials), never a silent hard "no".
+        # Unknown status: voicemail wording maps to "voicemail"; legacy `attending` flag to "yes"; else "callback" (recoverable).
         if any(m in status for m in vm_markers) or any(m in note for m in vm_markers):
             status = "voicemail"
         else:
@@ -78,9 +71,7 @@ def handle_record_rsvp(**kwargs):
           and not (kwargs.get("callback_time_text") or "").strip()
           and not (kwargs.get("callback_time_iso") or "").strip()
           and any(m in note for m in vm_markers)):
-        # Old-prompt habit: a machine answer recorded as "callback" with a voicemail note
-        # and no requested time. That's a voicemail, not a member request — recording it
-        # as "callback" is what created phantom next-day-10am member callbacks.
+        # A "callback" with a voicemail note and no requested time is a machine answer, not a member request.
         status = "voicemail"
     result = {
         "success": True,
@@ -95,10 +86,7 @@ def handle_record_rsvp(**kwargs):
         "note": kwargs.get("note", "") or "",
         "event": EVENT,
     }
-    # record_rsvp is a normal BLOCKING tool now (not SILENT), so its result prompts one turn.
-    # ALWAYS return the CONDITIONAL instruction: it guarantees the member hears a closing (speak
-    # if you haven't) WITHOUT a double/rephrased closing (stay silent if you already replied).
-    # This is the mute-proof path — never let the model record in silence.
+    # record_rsvp is a blocking tool, so its result prompts one turn; the conditional instruction guarantees exactly one closing.
     result["instruction"] = ("SYSTEM NOTE — never voice any of this, and never mention recording or bookkeeping. "
                              "The outcome is already saved. If you have said NOTHING to the member about this "
                              "answer yet, speak your ONE brief closing now. If you have already replied at all, "
@@ -116,10 +104,7 @@ def handle_end_call(**kwargs):
 # Live transcript watchers (browser WebSockets watching phone calls)
 live_watchers: set = set()
 
-# Bridge metadata from the /plivo/answer webhook to the media-stream WS, keyed by
-# Plivo CallUUID. Plivo does NOT reliably forward <Stream extraHeaders> on
-# bidirectional streams, so we stash caller/generation here at answer time and look
-# them up when the stream connects.
+# Metadata stashed at /plivo/answer keyed by CallUUID; Plivo drops <Stream extraHeaders> on bidirectional streams.
 _pending_call_meta: dict = {}
 
 
@@ -147,7 +132,6 @@ def _resolve_identity(call_id, header_caller, header_name):
     name = header_name or meta.get("name") or directory.first_name_for(caller)
     return caller, name
 
-# Initialize FastAPI
 app = FastAPI()
 
 app.add_middleware(
@@ -158,14 +142,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve static files
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 # EO Admin API (cost-free, session-gated). The demo, /superadmin, and this all coexist.
 app.include_router(eo_api.router)
 
-# ── EO Admin React SPA (built to admin/dist), served at /admin/* ──────────────
-# Coexists with the demo ("/") and the vanilla Super-Admin ("/superadmin").
+# EO Admin React SPA (built to admin/dist), served at /admin/*
 _ADMIN_DIST = os.path.join(os.path.dirname(__file__), "admin", "dist")
 if os.path.isdir(os.path.join(_ADMIN_DIST, "assets")):
     app.mount("/admin/assets", StaticFiles(directory=os.path.join(_ADMIN_DIST, "assets")), name="admin-assets")
@@ -368,13 +350,12 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info("connection closed")
 
 
-# ============ PLIVO VOICE ENDPOINTS ============
+# Plivo voice endpoints
 
 @app.api_route("/plivo/answer", methods=["GET", "POST"])
 async def plivo_answer(request: Request):
     """Plivo answer webhook: returns streaming XML when the callee picks up."""
-    # Prefer PUBLIC_URL (most reliable behind tunnels/proxies); else infer from the
-    # request, honouring X-Forwarded-Proto so we still pick wss behind nginx/ngrok.
+    # Prefer PUBLIC_URL; else infer from the request, honouring X-Forwarded-Proto so wss is picked behind proxies.
     public_url = os.getenv("PUBLIC_URL", "").rstrip("/")
     if public_url:
         parsed = urlparse(public_url)
@@ -388,17 +369,14 @@ async def plivo_answer(request: Request):
     ws_url = f"{'wss' if secure else 'ws'}://{host}/plivo/media-stream"
 
     qp = request.query_params
-    # Our explicit caller param (set by /call-me + scheduler) wins; for genuine
-    # inbound calls Plivo gives us the member's number in `From`.
+    # Explicit caller param (/call-me, scheduler) wins; genuine inbound calls carry the number in `From`.
     caller = qp.get("caller") or qp.get("From") or qp.get("from") or ""
     gen = qp.get("gen", "")
     origin = qp.get("origin", "")
-    # Optional per-call first name (from /call-me or the scheduler); overrides the
-    # directory lookup for personalising the greeting.
+    # Optional per-call first name overrides the directory lookup for the greeting.
     name = qp.get("name", "")
     campaign_id = qp.get("campaign", "")
-    # Stash by Plivo CallUUID so the media-stream WS can recover caller/generation/name
-    # even though extraHeaders don't propagate on bidirectional streams.
+    # Stash by CallUUID: extraHeaders don't propagate on bidirectional streams.
     call_uuid = qp.get("CallUUID") or qp.get("callUUID") or qp.get("RequestUUID") or ""
     _remember_call_meta(call_uuid, caller, gen, origin, name=name, campaign_id=campaign_id)
     hdr_pairs = []
@@ -413,8 +391,7 @@ async def plivo_answer(request: Request):
     extra_headers = ",".join(hdr_pairs)
     eh_attr = f' extraHeaders="{extra_headers}"' if extra_headers else ""
 
-    # Plivo <Stream>: URL is the element TEXT (not a url= attr); audioTrack must be
-    # "inbound" with bidirectional="true"; codec mulaw 8kHz.
+    # Plivo <Stream>: URL is the element text (not a url= attr); audioTrack "inbound", bidirectional, mulaw 8kHz.
     xml = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<Response>\n'
@@ -513,7 +490,7 @@ async def call_me(request: Request):
     return await dialer.place_call(to_number, request=request, name=name)
 
 
-# ============ LIVE TRANSCRIPT DASHBOARD ============
+# Live transcript dashboard
 
 @app.get("/live")
 async def live_dashboard():
@@ -1310,7 +1287,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer();});
 </html>"""
 
 
-# ============ ADMIN DASHBOARD (call logs, transcripts, costing) ============
+# Admin dashboard (call logs, transcripts, costing)
 
 def require_admin(request: Request):
     """Gate admin endpoints with ANALYTICS_SECRET (header X-Admin-Key or ?key=)."""
@@ -1463,7 +1440,7 @@ async def admin_call_refresh(call_id: str, request: Request):
     return {"updated": bool(updated)}
 
 
-# ============ CALLBACK MANAGEMENT ============
+# Callback management
 
 @app.get("/api/admin/callbacks")
 async def admin_callbacks(request: Request):

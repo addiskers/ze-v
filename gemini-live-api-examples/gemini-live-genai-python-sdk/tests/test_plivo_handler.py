@@ -45,7 +45,7 @@ def _bridge(ws=None, **env):
     return PlivoMediaBridge(ws or FakeWS(), gemini_client=None, text_trigger="[go]")
 
 
-# ── codec tables ──────────────────────────────────────────────────────────────
+# Codec tables
 
 def test_pcm_to_ulaw_table_matches_reference_encoder():
     for s in (-32768, -32635, -10000, -1, 0, 1, 42, 8000, 32635, 32767):
@@ -72,7 +72,7 @@ def test_meansquare_zero_for_silence_high_for_speech():
     assert _mulaw_frame_meansquare(loud) > 250_000
 
 
-# ── goodbye heuristics ────────────────────────────────────────────────────────
+# Goodbye heuristics
 
 def test_looks_like_goodbye():
     assert _looks_like_goodbye("okay bye") is True
@@ -87,7 +87,7 @@ def test_has_closing_repeat_detects_doubled_closing():
     assert _has_closing_repeat("lovely, see you on the tenth then") is False
 
 
-# ── goodbye playback: scheduling a hangup must NOT mute the farewell ─────────
+# Goodbye playback: scheduling a hangup must not mute the farewell
 
 def test_schedule_end_soft_lets_farewell_audio_through():
     async def run():
@@ -117,7 +117,7 @@ def test_schedule_end_muted_drops_further_audio():
     assert asyncio.run(run()) is True
 
 
-# ── outbound sender resilience ────────────────────────────────────────────────
+# Outbound sender resilience
 
 def test_sender_survives_transient_send_failures():
     async def run():
@@ -155,7 +155,7 @@ def test_sender_exits_when_socket_is_closed():
     assert asyncio.run(run()) is True
 
 
-# ── noise squelch: substitutes silence, same frame cadence, never drops ──────
+# Noise squelch: substitutes silence, same frame cadence, never drops
 
 def _media_msg(mulaw: bytes) -> str:
     return json.dumps({"event": "media",
@@ -201,7 +201,7 @@ def test_gate_off_forwards_everything_verbatim(monkeypatch):
     assert frame == ph.mulaw_to_pcm16k(quiet)
 
 
-# ── silence check: ask ONCE, then escalate — never loop the question ─────────
+# Silence check: ask once, then escalate — never loop the question
 
 def test_silence_nudge_fires_once_then_escalates(monkeypatch):
     monkeypatch.setenv("EO_SILENCE_CHECK", "true")
@@ -239,7 +239,7 @@ def test_silence_nudge_fires_once_then_escalates(monkeypatch):
     assert "Pratik" in still_there[0]
 
 
-# ── greeting watchdog: one firm push when Gemini stalls on the opening line ──
+# Greeting watchdog: one firm push when Gemini stalls on the opening line
 
 def test_greeting_watchdog_pushes_exactly_once(monkeypatch):
     monkeypatch.setenv("EO_GREETING_NUDGE_SECONDS", "0.5")
@@ -389,7 +389,7 @@ def test_silence_nudge_fires_even_when_turn_open_flag_is_stuck(monkeypatch):
     assert len(asyncio.run(run())) == 1
 
 
-# ── silence nudge: cooldown + hard cap survive noise-blip flag resets ─────────
+# Silence nudge: cooldown + hard cap survive noise-blip flag resets
 
 def test_silence_nudge_respects_cooldown_after_noise_reset(monkeypatch):
     monkeypatch.setenv("EO_SILENCE_CHECK", "true")
@@ -421,7 +421,7 @@ def test_silence_nudge_respects_cooldown_after_noise_reset(monkeypatch):
     assert asyncio.run(run()) == []                   # cooldown blocks the re-ask
 
 
-# ── bounded input queue: drop-oldest, never blocks ───────────────────────────
+# Bounded input queue: drop-oldest, never blocks
 
 def test_put_audio_drops_oldest_on_overflow():
     async def run():

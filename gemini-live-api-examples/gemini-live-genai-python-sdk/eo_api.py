@@ -135,7 +135,7 @@ def _strip_full(call: dict, include_cost: bool = False) -> dict:
     return c
 
 
-# ── per-role data scoping ────────────────────────────────────────────────────
+# Per-role data scoping
 def _scope_ids(user):
     """Campaign-id strings this user may see, or None for full access (eo_admin =
     Superadmin). An eo_agent (Admin) only sees campaigns they created + the calls
@@ -149,7 +149,7 @@ def _owns_or_admin(user, campaign) -> bool:
     return bool(campaign) and (user["role"] == "eo_admin" or campaign.get("created_by") == user["id"])
 
 
-# ── display statuses (labels ONLY — raw enums stay for logic/actions) ─────────
+# Display statuses (labels only — raw enums stay for logic/actions)
 # variant maps to the SPA pill palette: green | blue | amber | red
 _RSVP_LABELS = {
     "yes": ("Attending", "green"),
@@ -196,8 +196,7 @@ def _contact_display(cc, campaign=None, scheduler_on=True, now=None, now_min=Non
     # pending (and the legacy, never-written 'no_answer')
     if int(cc.get("attempts") or 0) == 0:
         return ("Queued", "amber")
-    # typed source of truth first (the reap stores rsvp_outcome='voicemail'); the
-    # last_error text is only a fallback for rows written before that existed
+    # rsvp_outcome='voicemail' is the typed source of truth; last_error text is a fallback for older rows
     reason = ("voicemail" if outcome == "voicemail"
               or "voicemail" in (cc.get("last_error") or "").lower() else "no answer")
     nxt = _parse_iso(cc.get("next_attempt_at"))
@@ -242,7 +241,7 @@ def _clean_remark(body) -> str:
     return remark
 
 
-# ── auth ─────────────────────────────────────────────────────────────────────
+# Auth
 @router.post("/login")
 async def login(request: Request):
     body = await request.json()
@@ -279,7 +278,7 @@ async def me_password(request: Request):
     return {"ok": True}
 
 
-# ── users (eo_admin only) ────────────────────────────────────────────────────
+# Users (eo_admin only)
 @router.get("/users")
 async def users_list(request: Request):
     eo_auth.require_eo_admin(request)
@@ -315,7 +314,7 @@ async def users_update(user_id: int, request: Request):
     return {"ok": True}
 
 
-# ── dashboard + call logs (cost for Superadmin; Admins see only their calls) ──
+# Dashboard + call logs (cost for Superadmin; Admins see only their calls)
 @router.get("/summary")
 async def eo_summary(request: Request):
     user = eo_auth.require_eo(request)
@@ -354,7 +353,7 @@ async def eo_calls_csv(request: Request):
     data = await store.list_calls(filters)
     items = _label_and_strip(data["items"], include_cost)
     buf = io.StringIO()
-    # Exactly: caller name, phone, date/time, status, RSVP, duration, remark (everything else is on the grid).
+    # Deliberately limited export columns — everything else is on the grid.
     cols = ["contact_name", "caller", "started_at", "status", "rsvp_outcome_status", "duration_seconds", "remark"]
     headers = ["Name", "Phone", "Date/Time", "Status", "RSVP", "Duration (s)", "Remark"]
     w = csv.writer(buf)
@@ -395,7 +394,7 @@ async def eo_call_audio(call_id: str, request: Request):
                         filename=f"call-{call_id}.wav")
 
 
-# ── campaigns ────────────────────────────────────────────────────────────────
+# Campaigns
 def _whole_int(v, name, lo, hi):
     """Accept only a whole number in [lo, hi]; reject decimals / junk with a 400."""
     try:
@@ -479,7 +478,6 @@ async def campaign_create(request: Request):
     if start_dt < datetime.now(timezone.utc) - timedelta(minutes=2):
         raise HTTPException(status_code=400, detail="Start time is in the past. Pick the current time or later.")
 
-    # callback config — whole numbers only, within documented bounds
     delay_h = _whole_int(body.get("callback_delay_hours", 4), "Call-back hours", 0, 720)
     max_day = _whole_int(body.get("callback_max_per_day", 3), "Attempts per day", 1, 10)
     days = _whole_int(body.get("callback_days", 1), "Call-back days", 1, 10)
@@ -498,9 +496,7 @@ async def campaign_create(request: Request):
     # owner-filtered: an Admin can only attach contacts from their OWN pool
     contacts = [c for c in eo_db.get_contacts_by_ids(ids, created_by=_contact_owner_scope(user))
                 if c.get("status") == "valid"]
-    # dedupe by phone: with per-user pools the same number can exist in several pools and
-    # a Superadmin could select it twice — one campaign row per phone, or the member gets
-    # dialed twice and the reap (keyed on campaign_id+phone) cross-stamps both rows
+    # dedupe by phone: duplicate rows would double-dial and the reap (keyed on campaign_id+phone) cross-stamps both
     seen_phones = set()
     contacts = [c for c in contacts
                 if c.get("phone") not in seen_phones and not seen_phones.add(c.get("phone"))]
@@ -595,7 +591,7 @@ async def campaign_contact_cancel(campaign_id: int, cc_id: int, request: Request
     return {"ok": True}
 
 
-# ── contacts pool (per-user: an Admin sees ONLY their own; Superadmin sees all) ─
+# Contacts pool (per-user: an Admin sees only their own; Superadmin sees all)
 def _contact_owner_scope(user):
     """None → all pools (Superadmin); otherwise the caller's own pool."""
     return None if user["role"] == "eo_admin" else int(user["id"])
@@ -670,7 +666,7 @@ async def contacts_template(request: Request):
     )
 
 
-# ── scheduler / callbacks (reuse super-admin logic) ──────────────────────────
+# Scheduler / callbacks (reuse super-admin logic)
 @router.get("/callbacks")
 async def eo_callbacks(request: Request):
     user = eo_auth.require_eo(request)
@@ -684,8 +680,7 @@ async def eo_callbacks(request: Request):
     items = _label_and_strip(items, include_cost)
     for c in items:
         cb = c.get("callback") or {}
-        # the callback row inherits the CALL's remark (= the agent's note) until someone
-        # writes a callback-specific remark
+        # the callback row inherits the call's remark until a callback-specific remark is written
         c["callback"] = {**cb, "remark": cb.get("remark") or c.get("remark") or None}
         label, variant = _CALLBACK_LABELS.get(cb.get("status"), (cb.get("status") or "—", "amber"))
         c["display_status"] = label
@@ -757,7 +752,7 @@ async def eo_callback_reschedule(call_id: str, request: Request):
     return {"ok": True}
 
 
-# ── manual RSVP overwrite ────────────────────────────────────────────────────
+# Manual RSVP overwrite
 _FINAL_OUTCOMES = ("yes", "no", "do_not_contact", "wrong_number")
 
 
@@ -807,7 +802,7 @@ async def eo_call_outcome(call_id: str, request: Request):
             "edited_by": call["rsvp_edited_by"]}
 
 
-# ── remarks (user-editable note on every grid row) ───────────────────────────
+# Remarks (user-editable note on every grid row)
 @router.patch("/calls/{call_id}/remark")
 async def eo_call_remark(call_id: str, request: Request):
     user = eo_auth.require_eo(request)
@@ -830,8 +825,7 @@ async def eo_callback_remark(call_id: str, request: Request):
     user = eo_auth.require_eo(request)
     call = await _owned_callback(user, call_id)
     if call["callback"].get("status") == "in_flight":
-        # the scheduler is mid-claim on this record; a whole-file save now could revert
-        # its in_flight status and cause a double dial — tell the user to retry shortly
+        # the scheduler is mid-claim; a whole-file save could revert in_flight and cause a double dial
         raise HTTPException(status_code=409, detail="This callback is being dialed right now — try again in a minute")
     call["callback"]["remark"] = _clean_remark(await request.json())
     await store.save_call(call)

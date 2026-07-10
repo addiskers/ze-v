@@ -141,7 +141,6 @@ async def _tick():
     due = await store.list_pending_callbacks(_iso(now))
     dialed = 0
     for meta in due:
-        # Stop when out of per-tick budget OR at the global simultaneous-call cap.
         # A cap-block just defers (leaves it pending/due) — no attempt is claimed.
         if dialed >= max_per_tick or dialed >= live.room():
             break
@@ -155,8 +154,7 @@ async def _tick():
         nr = _parse(cb.get("next_retry_at"))
         if nr is not None and nr > _now():
             continue
-        # Calling-hours hard stop: honour the originating campaign's window (else the global
-        # default). Outside the window we DEFER — leave it pending, don't fail — and try later.
+        # Calling-hours hard stop: campaign window (else global default); outside it defer — leave pending, don't fail.
         cid = cb.get("campaign_id")
         win = None
         if cid:
@@ -176,7 +174,7 @@ async def _tick():
             cb["last_error"] = "no destination number"
             await store.save_call(call)
             continue
-        # ---- ATOMIC CLAIM: flip + SAVE before dialing ----
+        # Atomic claim: flip + save before dialing
         claim_now = _now()
         cb["status"] = "in_flight"
         cb["attempts"] = cb.get("attempts", 0) + 1

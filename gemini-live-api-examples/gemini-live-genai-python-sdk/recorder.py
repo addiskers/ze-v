@@ -72,7 +72,7 @@ class CallRecorder:
         self._closed = False
         self._started_ts = None
 
-    # ---- lifecycle ---------------------------------------------------------
+    # Lifecycle
 
     async def open(self, source, call_sid=None, caller=None, generation=0, campaign_id=None,
                    origin_call_id=None):
@@ -156,8 +156,6 @@ class CallRecorder:
             if self.call["source"] == "twilio" and not str(self.call["call_sid"]).startswith("web-"):
                 asyncio.create_task(self._deferred_twilio_refresh(self.call["id"], self.call["call_sid"]))
 
-            # If THIS was a callback-result call, copy its real outcome back onto the origin
-            # record + campaign contact (so the person stops showing "callback" forever).
             await self._backpropagate_to_origin()
         except Exception as e:
             logger.warning(f"CallRecorder.close failed: {e}")
@@ -173,7 +171,7 @@ class CallRecorder:
             outcome = self.call.get("rsvp_outcome_status")
             if not origin_id or not outcome:
                 return                          # fresh inbound / demo call, or no RSVP captured
-            # ---- (a) origin call record ----
+            # (a) origin call record
             try:
                 origin = await store.load_call(origin_id)
             except Exception:
@@ -182,17 +180,10 @@ class CallRecorder:
                 cb = origin["callback"]
                 already = cb.get("result_call_id") == self.call.get("id") and cb.get("result_outcome")
                 if not already:
-                    # HISTORY IS IMMUTABLE: do NOT overwrite the origin call's own rsvp_outcome_status
-                    # (or booking_created / rsvp_* fields). Each call record is a snapshot — if call #1
-                    # recorded "callback", it STAYS "callback"; the newer result call carries the new
-                    # answer, and the final per-person outcome lives on the campaign_contacts rollup (b)
-                    # below. We only RESOLVE the callback block and link it to the result call, so the
-                    # callback moves from pending → history and the origin can show what it led to.
+                    # Call records are immutable history: only resolve/link the callback block — never overwrite the origin's own rsvp_* fields; the final per-person outcome lives on the campaign_contacts rollup.
                     cb["result_outcome"] = outcome
                     cb["result_call_id"] = self.call.get("id")
-                    # resolve the block only for a real answer — "callback" (they asked again)
-                    # and "voicemail" (a machine answered, not the member) are NOT answers —
-                    # and never resurrect a cancelled one
+                    # Resolve only on a real answer ("callback"/"voicemail" are not) and never resurrect a cancelled block
                     if (outcome not in ("callback", "voicemail")
                             and cb.get("status") in ("completed", "in_flight", "pending")):
                         cb["status"] = "completed"
@@ -200,11 +191,7 @@ class CallRecorder:
                         await store.save_call(origin)
                     except Exception as e:
                         logger.warning(f"back-prop: origin save failed: {e}")
-            # ---- (b) campaign contact ----
-            # Rolls up EVERY outcome, incl. "voicemail": the callback chain is spent (the
-            # generation cap stops re-scheduling), so "Voicemail" is the truthful final
-            # state — better than the contact showing a phantom "Callback requested"
-            # forever. Only the block-resolution above treats voicemail as a non-answer.
+            # (b) campaign contact: rolls up every outcome incl. "voicemail" (the generation cap stops re-scheduling, so it is the truthful final state)
             cid = self.call.get("campaign_id")
             caller = (self.call.get("caller") or "").strip()
             if cid and caller:
@@ -218,7 +205,7 @@ class CallRecorder:
         except Exception as e:
             logger.warning(f"back-prop failed: {e}")
 
-    # ---- internals ---------------------------------------------------------
+    # Internals
 
     def _accumulate_turn(self, role, text):
         if not text:
@@ -265,9 +252,7 @@ class CallRecorder:
             self.call["rsvp_do_not_contact"] = bool(result.get("do_not_contact"))
             self.call["rsvp_accompanying_children"] = result.get("accompanying_children", "") or ""
             self.call["rsvp_note"] = result.get("note", "") or ""
-            # The agent's note IS the call's Remark (client decision): auto-filled here,
-            # editable later in the admin (remark PATCH is blocked while in_progress, so
-            # this can never clobber a human edit).
+            # The agent's note auto-fills the Remark; remark PATCH is blocked while in_progress, so this never clobbers a human edit
             if self.call["rsvp_note"]:
                 self.call["remark"] = self.call["rsvp_note"]
             if result.get("guest_name"):
@@ -275,11 +260,7 @@ class CallRecorder:
             if status == "callback":
                 self._schedule_callback(result)
             else:
-                # "voicemail" lands here on purpose: a machine answering is NOT a member
-                # request — it must NOT create a "user requested callback". Campaign calls
-                # are retried by campaign_runner (same track as ring-no-answer); non-campaign
-                # calls just record the outcome (admin can Call now).
-                # Outcome changed (e.g. maybe→yes): cancel any callback we'd queued.
+                # "voicemail" deliberately schedules no callback (campaign_runner handles retries); an outcome change cancels any queued callback
                 cb = self.call.get("callback")
                 if cb and cb.get("status") == "pending":
                     cb["status"] = "cancelled"

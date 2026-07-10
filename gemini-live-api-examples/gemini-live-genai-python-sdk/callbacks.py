@@ -37,7 +37,7 @@ def _iso(dt):
     return dt.astimezone(timezone.utc).isoformat()
 
 
-# ── calling hours (the night hard-stop) — minutes-since-midnight in the calling tz ──
+# Calling hours (night hard-stop): minutes-since-midnight in the calling tz
 def hhmm_to_min(s, default=0):
     """'09:00' -> 540. Returns `default` on bad input."""
     try:
@@ -205,8 +205,7 @@ def compute_due_at(callback_time_iso, callback_time_text):
         if off.isdigit():
             due = now_utc + timedelta(seconds=int(off))        # explicit env offset wins (back-compat)
         else:
-            # No day/time captured → default to the NEXT day at 10:00 local, NOT +2h the same day
-            # (a "callback" almost always means another time, not this same afternoon).
+            # No day/time captured → default to next day 10:00 local (a "callback" almost never means the same afternoon).
             due = (now_local + timedelta(days=1)).replace(
                 hour=10, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         source = "default"

@@ -36,15 +36,10 @@ except ImportError:          # pragma: no cover - starlette always ships with Fa
 logger = logging.getLogger(__name__)
 
 from gemini_live import _SILENT_SCHEDULING
-# On the server (google-genai >= 2.x) record_rsvp is SILENT — its result never forces a turn, so there
-# is no "filler" turn to suppress; the only risk is a mute record, which we nudge. On <2.x this is None
-# and we keep the blocking-path forced-turn suppression.
+# google-genai >= 2.x: record_rsvp is SILENT (its result never forces a turn); on <2.x this is None and the blocking-path forced-turn suppression applies.
 _RSVP_SILENT = _SILENT_SCHEDULING is not None
 
-# Mutual-goodbye detection: after the agent's goodbye + end_call, a caller who just
-# says "bye / thanks / okay" is WRAPPING UP — we should let the hangup proceed, not
-# cancel it and re-engage (which restarts the whole grace cycle and drags the call
-# out to 10-16s). A real follow-up (a question / new info) still cancels the hangup.
+# Mutual-goodbye detection: after the agent's goodbye + end_call, a bare "bye/thanks/okay" lets the hangup proceed; a real follow-up still cancels it.
 _QUESTION_RE = re.compile(
     r"[?]|\b(what|whats|when|where|who|whom|which|how|why|can i|could|would you|"
     r"is it|are|do you|does|will|actually|wait|hold on|one (thing|sec|second|"
@@ -54,16 +49,13 @@ _GOODBYE_RE = re.compile(
     r"that'?s all|that is all|nothing else|nothing|i'?m done|we'?re done|see you|"
     r"good ?night|great|perfect|okay bye|ok bye|done)\b", re.I)
 
-# "Hold on / give me a minute" means STAY on THIS call — not a sign-off and not a callback.
-# When the caller says one of these we keep the line open for a grace window (see _hold_until).
+# "Hold on / give me a minute" means stay on THIS call (not a sign-off or callback) — keeps the line open for a grace window (see _hold_until).
 _HOLD_RE = re.compile(
     r"\b(hold on|hold please|please hold|hang on|bear with me|one moment|just a "
     r"(sec|second|minute|moment)|give me (a|one|two|a couple|a few)|one (sec|second|minute|moment)|"
     r"two (secs|seconds|minutes)|a (minute|moment|sec|second)|wait)\b", re.I)
 
-# Post-goodbye: only a genuine question / new info should re-open the call. A bare "hello", "okay",
-# "yeah", "hmm" must NOT re-engage the model (that made it re-read its whole invitation). This is a
-# POSITIVE "is there a real follow-up?" test — used only during the pending-hangup grace window.
+# Used only during the pending-hangup grace window: a genuine question / new info re-opens the call; a bare "hello/okay/hmm" must NOT re-engage the model.
 _REAL_FOLLOWUP_RE = re.compile(
     r"[?]|\b(what|whats|when|where|who|which|how|why|can i|could|would|is it|are you|do you|does|"
     r"will|register|registration|bring|time|venue|address|dress|kids?|child|children|wife|husband|"
@@ -80,10 +72,7 @@ def _looks_like_goodbye(text: str) -> bool:
     return bool(_GOODBYE_RE.search(t))
 
 
-# Within-turn repeat guard: if the agent repeats itself inside ONE turn (the fusion / spiral
-# loop), we stop feeding the duplicate audio. Two paths: (1) a known closing marker voiced twice,
-# and (2) a GENERAL verbatim phrase-loop — any run of words repeated in the turn — which catches
-# callback/goodbye closings ("I'll give you a call back… speak soon!") the marker list misses.
+# Within-turn repeat guard: stop feeding duplicate audio when a known closing marker is voiced twice or any verbatim phrase-run repeats inside one turn.
 _CLOSING_MARKERS = (
     "see you on the", "so glad you", "we'll miss you", "we will miss you",
     "drop all the details", "receive all the details", "details on the whatsapp",
@@ -109,7 +98,7 @@ def _has_closing_repeat(turn_text: str) -> bool:
         seen.add(g)
     return False
 
-# ===== Mulaw codec tables (ITU-T G.711) =====
+# Mulaw codec tables (ITU-T G.711)
 
 # Mulaw -> Linear PCM16 decode table (256 entries)
 _MULAW_DECODE = array.array("h")  # signed short
@@ -159,7 +148,7 @@ def _pcm16_to_mulaw_sample(sample: int) -> int:
     return ~(sign | (exponent << 4) | mantissa) & 0xFF
 
 
-# ===== Audio conversion functions =====
+# Audio conversion functions
 
 def mulaw_to_pcm16k(mulaw_bytes: bytes) -> bytes:
     """Convert mulaw 8kHz (Plivo) -> PCM 16-bit 16kHz (Gemini input)."""
@@ -175,13 +164,10 @@ def mulaw_to_pcm16k(mulaw_bytes: bytes) -> bytes:
     return struct.pack(f"<{len(samples_16k)}h", *samples_16k)
 
 
-# Squares of the decode table: energy of a frame is a pure table-lookup sum (runs on
-# every inbound 20ms frame, so it must be cheap).
+# Squares of the decode table: frame energy is a pure table-lookup sum (runs on every inbound 20ms frame, so it must be cheap).
 _MULAW_SQ = [int(v) * int(v) for v in _MULAW_DECODE]
 
-# Full PCM16 -> mulaw byte lookup (indexed by the sample's unsigned 16-bit pattern).
-# Turns the per-sample encode (the hottest loop: every agent sample at 24kHz) into one
-# bytes-index. Built once at import (~65k cheap calls).
+# Full PCM16 -> mulaw lookup (indexed by unsigned 16-bit pattern) makes the hottest loop — every agent sample at 24kHz — one bytes-index; built once at import.
 _PCM_TO_ULAW = bytes(
     _pcm16_to_mulaw_sample(_u - 65536 if _u >= 32768 else _u) for _u in range(65536)
 )
@@ -212,8 +198,7 @@ def pcm24k_to_mulaw(pcm_bytes: bytes) -> bytes:
 ULAW_FRAME_BYTES = 160
 ULAW_FRAME_S = 0.020
 
-# 20ms of digital silence as PCM16 @ 16kHz (320 samples × 2 bytes) — what the noise
-# squelch feeds Gemini in place of a below-gate frame (substitute, never drop).
+# 20ms of digital silence as PCM16 @ 16kHz (320 samples × 2 bytes) — substituted (never dropped) for below-gate frames by the noise squelch.
 _SILENCE_20MS_16K = bytes(640)
 
 
@@ -225,10 +210,7 @@ def _env_float(name, default):
         return float(default)
 
 
-# Soft "on hold" melody to fill the 2-4s of dead air after the caller answers but before Gemini
-# produces the greeting. A gentle major-pentatonic phrase with a music-box/celesta timbre (each
-# note swells then fades, so it chimes rather than beeps) — looped until the agent's first audio
-# arrives. Deliberately NOT a single repeating tone (that read like a countdown/alarm). Built once.
+# Soft connect melody looped over the 2-4s gap before Gemini's greeting; deliberately NOT a single repeating tone (reads like a countdown/alarm). Built once.
 _HOLD_MUSIC_FRAMES = None
 
 
@@ -240,8 +222,7 @@ def _hold_music_frames():
     rate = 8000
 
     def note(freq, dur, amp=0.24):
-        # sine + a soft 2nd harmonic for warmth, with an ~8ms attack then exponential decay so each
-        # note rings like a music box and settles to silence instead of clicking on/off.
+        # sine + soft 2nd harmonic; ~8ms attack then exponential decay so notes settle without clicking on/off.
         n = int(rate * dur)
         atk = max(1, int(rate * 0.008))
         out = []
@@ -281,12 +262,10 @@ class PlivoMediaBridge:
         self.generation = 0
         self.text_trigger = text_trigger
         self.on_event = on_event  # async callback for live transcript
-        # (call_id, header_caller, header_name) -> (caller, first_name). Lets the
-        # bridge personalise the greeting even when Plivo drops extraHeaders.
+        # (call_id, header_caller, header_name) -> (caller, first_name); personalises the greeting even when Plivo drops extraHeaders.
         self.resolve_identity = resolve_identity
 
-        # Queues for Gemini. The audio queue is BOUNDED (drop-oldest on overflow) so a
-        # stalled Gemini send can never buffer minutes of stale audio — live > complete.
+        # Audio queue is BOUNDED (drop-oldest on overflow) so a stalled Gemini send can never buffer minutes of stale audio.
         self.audio_input_queue = asyncio.Queue(
             maxsize=max(10, int(_env_float("EO_AUDIO_INPUT_QUEUE_FRAMES", 150))))
         self.video_input_queue = asyncio.Queue()
@@ -299,8 +278,7 @@ class PlivoMediaBridge:
         self._call_end_emitted = False
         self._pending_hangup_task = None
         self._ending = False                     # hangup scheduled → drop any further agent audio (no re-greet)
-        # Connect ringback: soft tone that fills the post-answer / pre-greeting gap,
-        # stopped the instant the agent's first audio arrives.
+        # Connect ringback fills the post-answer / pre-greeting gap; stopped at the agent's first audio.
         self._agent_audio_started = False
         self._connect_tone_task = None
         # Auto-hangup signals (so the call ends even if the agent never calls end_call):
@@ -308,16 +286,12 @@ class PlivoMediaBridge:
         self._last_activity = time.monotonic()   # last time either party spoke / a turn ended
         self._turn_text = ""                     # accumulated agent transcript for the current turn
         self._suppress_turn = False              # drop the rest of this turn's audio (repeat detected)
-        # Stray forced-turn guard: record_rsvp is a BLOCKING tool, so its result forces one more model
-        # turn. When the agent already spoke its closing, that turn is filler ("Your turn completed." /
-        # "I've noted that down.") — drop its audio until the caller next speaks. Keyed on caller VAD
-        # (not turn_complete) to dodge the turn_complete-vs-tool_call race and preserve mute-proofing.
+        # Stray forced-turn guard: blocking record_rsvp forces one more model turn; when the agent already spoke, that turn is filler — drop its audio until the caller next speaks (keyed on VAD to dodge the turn_complete-vs-tool_call race).
         self._spoke_since_user = False           # agent emitted real audio since the caller last voiced
         self._suppress_post_record = False       # drop the forced post-record turn's audio
         self._did_suppress_audio = False         # a stray was actually dropped (gates the turn_complete clear)
         self._suppress_post_record_at = 0.0      # monotonic arm time (watchdog so the flag can never latch)
-        # Real-time caller voice-activity (leads the laggy transcription "user" events) so we never
-        # cut the caller off mid-sentence. Starts at 0.0 (epoch) so it reads "stale" until real speech.
+        # Real-time caller voice-activity leads the laggy transcription "user" events; starts at 0.0 so it reads "stale" until real speech.
         self._last_caller_audio = 0.0            # monotonic ts of the last VOICED inbound frame
         self._hold_until = 0.0                   # don't idle-hangup while now < this (caller asked to hold)
         self.first_name = ""                     # resolved member first name (for personalised nudges)
@@ -333,9 +307,7 @@ class PlivoMediaBridge:
         self._greeting_sent_at = 0.0             # when the opening trigger was queued (0 = not yet)
         self._greeting_nudged = False            # the speak-NOW watchdog push was already sent
         self._reply_nudged = False               # missed-reply rescue sent for the current unanswered spell
-        # Noise squelch (EO_NOISE_GATE, default OFF): frames below the gate are replaced by
-        # digital silence before Gemini hears them — NEVER dropped (the server VAD must
-        # still hear ~silence_duration_ms of quiet to close a turn; a gap just stalls it).
+        # Noise squelch (EO_NOISE_GATE, default OFF): below-gate frames are replaced by digital silence, NEVER dropped — the server VAD must hear the quiet to close a turn.
         self._gate_on = os.getenv("EO_NOISE_GATE", "false").strip().lower() in ("1", "true", "yes", "on")
         self._gate_thr = _env_float("EO_NOISE_GATE_RMS", 250) ** 2
         self._gate_thr_low = self._gate_thr / 4  # hysteresis: sustained speech stays open above this
@@ -347,9 +319,7 @@ class PlivoMediaBridge:
             self._vad_ms_threshold = float(os.getenv("EO_VAD_RMS_THRESHOLD", "500")) ** 2
         except ValueError:
             self._vad_ms_threshold = 500.0 ** 2
-        # Call recording: mix inbound (caller) + outbound (agent) mulaw into one mono 8k PCM16
-        # timeline, written to a WAV at call end. Behind a flag; tees are guarded so a recording
-        # failure can never affect the live call.
+        # Call recording: mix caller + agent mulaw into one mono 8k PCM16 timeline, written to WAV at call end; guarded so a recording failure can never affect the live call.
         self._rec_on = os.getenv("EO_RECORD_CALLS", "true").strip().lower() not in ("0", "false", "no", "off")
         self._rec_t0 = None
         self._rec = array.array("h")             # mono 8kHz PCM16 mix (sample-indexed timeline)
@@ -404,7 +374,7 @@ class PlivoMediaBridge:
         except Exception as e:
             logger.warning(f"Failed to write call recording: {e}")
 
-    # ---- outbound (Gemini -> Plivo) ----
+    # Outbound (Gemini -> Plivo)
 
     async def _play_connect_tone(self):
         """Fill the gap between the caller answering and the agent's first words with a soft
@@ -454,25 +424,21 @@ class PlivoMediaBridge:
         if self._suppress_turn:
             return                               # a repeated closing was detected — drop the duplicate audio
         if self._suppress_post_record:
-            # record_rsvp fired after the agent already spoke → this forced tool-result turn is filler.
-            # Drop it. Watchdog: if it somehow stays armed too long, fall through rather than stay muted.
+            # Forced tool-result turn after the agent already spoke is filler — drop it; if armed too long, fall through rather than stay muted.
             if time.monotonic() - self._suppress_post_record_at <= 4.0:
                 self._did_suppress_audio = True
                 return
             self._suppress_post_record = False
         now_a = time.monotonic()
         if not self._spoke_since_user:
-            # First agent audio since the caller last voiced = start of the reply the caller
-            # actually hears. Log the turn latency so prod can quantify + tune it.
+            # First agent audio since the caller last voiced = start of the audible reply; log the turn latency.
             if self._last_caller_audio > 0.0:
                 since_voice = now_a - self._last_caller_audio
                 since_text = (now_a - self._last_user_event) if self._last_user_event > 0.0 else -1.0
                 logger.info(f"TURN LATENCY: first agent audio {since_voice:.2f}s after caller's last "
                             f"voiced frame ({since_text:.2f}s after their transcription)")
         self._last_agent_audio = now_a
-        # NOTE: _silence_nudged is deliberately NOT reset here — the nudge's own audio
-        # would clear it and the agent would re-ask forever instead of escalating.
-        # Only VOICED CALLER audio clears it (see handle_plivo_messages).
+        # _silence_nudged is deliberately NOT reset here — the nudge's own audio would clear it; only voiced caller audio clears it (see handle_plivo_messages).
         self._reply_nudged = False               # the agent IS replying — re-arm the missed-reply rescue
         self._spoke_since_user = True            # a genuine agent frame is going out this "since-caller" window
         try:
@@ -532,8 +498,7 @@ class PlivoMediaBridge:
                                      f"({e}); ending bridge")
                         break
                     logger.warning(f"Plivo outbound send failed (transient, #{failures}): {e}")
-                    # keep the frame cadence on failures too — otherwise a burst of raising
-                    # sends burns the 25-failure budget in microseconds instead of ~0.5s
+                    # keep the frame cadence on failures too — otherwise a burst burns the 25-failure budget in microseconds instead of ~0.5s
                     await asyncio.sleep(ULAW_FRAME_S)
                     continue
                 self._rec_add(frame)               # record what the caller heard (agent side)
@@ -568,7 +533,7 @@ class PlivoMediaBridge:
         except Exception:
             pass
 
-    # ---- inbound (Plivo -> Gemini) ----
+    # Inbound (Plivo -> Gemini)
 
     @staticmethod
     def _extract_header(data: dict, start: dict, name: str) -> str:
@@ -608,8 +573,7 @@ class PlivoMediaBridge:
                         self.generation = int(gen_raw) if gen_raw else 0
                     except ValueError:
                         self.generation = 0
-                    # Resolve caller + first name BEFORE emitting call_start (which may
-                    # pop the pending-call metadata the resolver relies on).
+                    # Resolve identity BEFORE emitting call_start (which may pop the pending-call metadata the resolver relies on).
                     first_name = ""
                     if self.resolve_identity:
                         try:
@@ -627,13 +591,10 @@ class PlivoMediaBridge:
                         await self._emit({"type": "call_start", "call_sid": self.call_id or "",
                                           "caller": self.caller or "",
                                           "generation": self.generation})
-                        # Start the soft connect ringback (once per call) so the caller isn't
-                        # met with silence while Gemini spins up the greeting.
+                        # Soft connect ringback (once per call) so the caller isn't met with silence.
                         if not self._agent_audio_started:
                             self._connect_tone_task = asyncio.create_task(self._play_connect_tone())
-                        # Trigger the AI to start talking — personalised by first name when known.
-                        # INSIDE the once-only guard: a duplicate Plivo `start` must NOT re-send this,
-                        # or the agent re-reads its whole opening mid-call.
+                        # Opening trigger stays INSIDE the once-only guard: a duplicate Plivo `start` must NOT re-send it, or the agent re-reads its whole opening mid-call.
                         if first_name:
                             trigger = (f"[The guest has just answered. Their first name is {first_name}. "
                                        f"Begin THE OPENING: your first turn is EXACTLY "
@@ -653,10 +614,7 @@ class PlivoMediaBridge:
                     payload = media.get("payload")
                     if payload:
                         mulaw_bytes = base64.b64decode(payload)
-                        # Real-time VAD: stamp caller activity the instant a VOICED inbound frame
-                        # arrives — long before Gemini transcribes it — so the idle guard / hangup
-                        # never fire while the caller is actually talking. Energy-gated so continuous
-                        # silence/comfort-noise frames (Plivo streams ~20ms frames non-stop) don't count.
+                        # Real-time VAD: stamp caller activity on VOICED frames (long before transcription) so idle/hangup guards never fire mid-speech; energy-gated since Plivo streams ~20ms frames non-stop.
                         track = str(media.get("track") or "inbound").lower()
                         if track == "inbound":
                             self._rec_add(mulaw_bytes)   # record the caller side (all frames)
@@ -665,19 +623,14 @@ class PlivoMediaBridge:
                             if frame_ms >= self._vad_ms_threshold:
                                 self._last_caller_audio = now_m
                                 self._last_activity = now_m
-                                # Caller is speaking now: the agent's next audio is a genuine reply, not
-                                # forced-turn filler. Clear the stray guard (VAD leads the reply audio, so
-                                # the reply is never clipped) and reset the "agent spoke" signal.
+                                # Caller is speaking now → the agent's next audio is a genuine reply, not forced-turn filler; clear the stray guard and the "agent spoke" signal.
                                 self._spoke_since_user = False
                                 self._suppress_post_record = False
                                 self._did_suppress_audio = False
                                 self._silence_nudged = False
                                 self._silence_wrapup_at = 0.0
                             if self._gate_on:
-                                # Squelch: SUBSTITUTE silence for below-gate frames (same frame cadence —
-                                # Gemini's VAD needs to HEAR the quiet). Hysteresis: opens at the gate,
-                                # stays open on sustained speech above gate/4, then a hangover window so
-                                # onsets/tails and inter-word gaps are never clipped.
+                                # SUBSTITUTE silence for below-gate frames (Gemini's VAD needs to HEAR the quiet); hysteresis + hangover so onsets/tails and inter-word gaps are never clipped.
                                 if frame_ms >= self._gate_thr or (
                                         frame_ms >= self._gate_thr_low
                                         and (now_m - self._gate_voiced_at) <= self._gate_hangover):
@@ -740,16 +693,13 @@ class PlivoMediaBridge:
             grace = min(float(os.getenv("CALL_HANGUP_GRACE_SECONDS", "1.0")), 1.0)
         except ValueError:
             grace = 1.0
-        # If the agent hasn't yet replied to the caller's last utterance (its farewell is
-        # still being GENERATED — first audio can lag 1-3s), give it a bounded head start;
-        # otherwise a fast grace window hangs up between "bye" and the agent's reply.
+        # If the agent's farewell is still being generated (first audio can lag 1-3s), give it a bounded head start — otherwise a fast grace window hangs up between "bye" and the reply.
         try:
             farewell_wait = min(float(os.getenv("EO_FAREWELL_WAIT_SECONDS", "4")), 8.0)
         except ValueError:
             farewell_wait = 4.0
         waited = 0.0
-        # Only when a reply is actually expected: the caller HAS spoken (_last_user_event
-        # set) and the mute isn't armed (armed → no audio can ever arrive → pure dead air).
+        # Only when a reply is actually expected: the caller HAS spoken and the mute isn't armed (armed → no audio can ever arrive).
         while (waited < farewell_wait and not self._ending
                and self._last_user_event > 0.0
                and self._out_frames.empty() and not self._residual
@@ -766,8 +716,7 @@ class PlivoMediaBridge:
                 stable = 0                         # more audio arrived; keep waiting
             await asyncio.sleep(0.02)
         await asyncio.sleep(grace)                 # let Plivo finish playing + a natural pause
-        # Last-instant save: if the caller is voicing RIGHT NOW (audio arrived but transcription
-        # hasn't produced a "user" event yet), don't cut them off — abort and keep the line up.
+        # Last-instant save: if the caller is voicing right now (transcription lagging), abort and keep the line up.
         if self._caller_voiced_recently():
             logger.info("Caller voiced within abort window; ABORTING hangup (mid-speech save)")
             self._pending_hangup_task = None
@@ -830,9 +779,7 @@ class PlivoMediaBridge:
             while True:
                 await asyncio.sleep(1.0)
                 now = time.monotonic()
-                # Greeting watchdog: Gemini occasionally stalls 5-7s on the opening line
-                # (server-side variance) while the member hears only the connect melody.
-                # One firm push after ~4s almost always unsticks the generation.
+                # Greeting watchdog: Gemini occasionally stalls 5-7s on the opening line; one firm push after ~4s almost always unsticks it.
                 if (not self._agent_audio_started and not self._greeting_nudged
                         and self._greeting_sent_at > 0.0
                         and now - self._greeting_sent_at >= greet_nudge_s):
@@ -847,11 +794,7 @@ class PlivoMediaBridge:
                 if now < self._hold_until:
                     continue                       # caller asked to hold — keep the line open
                 idle = now - self._last_activity
-                # _turn_open is cleared by Gemini's turn_complete — but with a text-triggered
-                # greeting and a caller whose speech never registers as a turn, that signal
-                # may NEVER come. Self-expire: if no agent audio has flowed for 3s and the
-                # queue is drained, the turn is over no matter what the flag says (otherwise
-                # the whole nudge ladder stays muzzled and only the 25s dead-air guard acts).
+                # turn_complete may never come (text-triggered greeting / unregistered caller turn) — self-expire the turn after 3s of agent silence with a drained queue, or the nudge ladder stays muzzled.
                 agent_quiet = (self._out_frames.empty() and not self._residual
                                and (not self._turn_open
                                     or now - self._last_agent_audio >= 3.0))
@@ -861,13 +804,7 @@ class PlivoMediaBridge:
                     continue
                 if nudge_on and not self._rsvp_recorded and self._agent_audio_started \
                         and not self._ending and agent_quiet:
-                    # Missed-reply rescue: the caller SPOKE after the agent's last audio and
-                    # the AGENT has been silent for reply_rescue_s — Gemini sometimes fails to
-                    # register a reply as a turn (it may even transcribe it and stay mute).
-                    # CRITICAL: measure the AGENT's silence, not the caller's — an ignored
-                    # caller keeps repeating "hello? hello?", and keying on THEIR last voice
-                    # resets the timer forever (same reason the still-there ladder, which
-                    # measures mutual quiet, can't cover this).
+                    # Missed-reply rescue: Gemini sometimes never registers a caller reply as a turn. Measure the AGENT's silence, not the caller's — an ignored caller repeating "hello?" would reset a caller-keyed timer forever.
                     if (not self._reply_nudged
                             and self._last_caller_audio > self._last_agent_audio
                             and now - self._last_agent_audio >= reply_rescue_s):
@@ -947,8 +884,7 @@ class PlivoMediaBridge:
             await asyncio.sleep(grace)
         except asyncio.CancelledError:
             return                          # caller resumed — do NOT hang up
-        # Caller started talking during the grace window (audio in, transcription still catching up)?
-        # Abort here too — _drain_then_hangup re-checks as the authoritative gate.
+        # Caller voiced during the grace window (transcription still catching up) → abort here too; _drain_then_hangup re-checks as the authoritative gate.
         if self._caller_voiced_recently():
             logger.info("Caller voiced during end grace; ABORTING hangup (mid-speech save)")
             self._pending_hangup_task = None
@@ -981,26 +917,22 @@ class PlivoMediaBridge:
                     if etype == "tool_call" and event.get("name") == "record_rsvp":
                         self._rsvp_recorded = True
                         if _RSVP_SILENT:
-                            # Silent RSVP: the result never forces a turn (so it can't double the closing).
-                            # Only risk is a MUTE record — recorded without speaking → nudge it to speak once.
+                            # Silent RSVP can't double the closing; only risk is a MUTE record — nudge it to speak once.
                             if not self._spoke_since_user:
                                 await self.text_input_queue.put(
                                     "[Recorded. You have NOT said anything to the member about this answer yet "
                                     "— say your ONE short closing now, then stop.]")
                         elif self._spoke_since_user:
-                            # Blocking fallback (<2.x): the result forces one more turn; the agent already
-                            # spoke, so drop that filler turn's audio.
+                            # Blocking fallback (<2.x): the result forces one more turn — the agent already spoke, so drop that filler turn's audio.
                             self._suppress_post_record = True
                             self._did_suppress_audio = False
                             self._suppress_post_record_at = time.monotonic()
-                    # Stamp activity on caller speech AND agent speech ("gemini"), so the idle
-                    # timer only counts TRUE mutual silence — never while either side is talking.
+                    # Stamp activity on caller AND agent speech so the idle timer only counts TRUE mutual silence.
                     if etype in ("user", "interrupted", "turn_complete", "gemini"):
                         self._last_activity = time.monotonic()
                     if etype == "user":
                         self._last_user_event = time.monotonic()
-                    # Within-turn repeat guard: accumulate the agent's transcript; if a closing
-                    # phrase repeats inside ONE turn (the fusion loop), drop the duplicate audio.
+                    # Within-turn repeat guard: if a closing phrase repeats inside ONE turn, drop the duplicate audio.
                     if etype == "gemini":
                         self._turn_open = True           # a model turn is streaming (audio may lag the text)
                         self._turn_text += " " + (event.get("text") or "")
@@ -1011,19 +943,13 @@ class PlivoMediaBridge:
                         self._turn_open = False
                         self._turn_text = ""
                         self._suppress_turn = False
-                        # A hangup is pending and the agent's FAREWELL just finished playing
-                        # (agent audio went out after the soft end was scheduled): arm the mute
-                        # so a spurious LATER turn (a re-greet) can never play. Gating on
-                        # audio-since-schedule keeps a tool-only or in-flight stale turn's
-                        # turn_complete from muting the real farewell that hasn't played yet.
+                        # Arm the mute only after agent audio PLAYED past the soft-end schedule — a tool-only or stale turn's turn_complete must not mute the real farewell.
                         if (etype == "turn_complete" and not self._ending
                                 and self._pending_hangup_task and not self._pending_hangup_task.done()
                                 and self._soft_end_at > 0.0
                                 and self._last_agent_audio >= self._soft_end_at):
                             self._ending = True
-                        # Clear the stray guard once the forced turn we ACTUALLY muted ends (gated by
-                        # _did_suppress_audio so the closing turn's own turn_complete doesn't clear it
-                        # early). Barge-in always clears — the caller is engaged.
+                        # Clear the stray guard once the turn we ACTUALLY muted ends (_did_suppress_audio gates it); barge-in always clears.
                         if etype == "interrupted" or self._did_suppress_audio:
                             self._suppress_post_record = False
                             self._did_suppress_audio = False
@@ -1031,8 +957,7 @@ class PlivoMediaBridge:
                         logger.info("Agent requested end_call; will hang up after grace window")
                         self._schedule_end()
                         continue           # stay live during the grace window
-                    # Caller asked to hold / wait — keep the line open, cancel any pending hangup,
-                    # and DON'T treat it as a sign-off (deterministic, independent of the model).
+                    # Caller asked to hold: keep the line open, cancel any pending hangup — deterministic, not a sign-off.
                     if etype == "user" and _HOLD_RE.search(event.get("text") or ""):
                         try:
                             hold = float(os.getenv("EO_HOLD_GRACE_SECONDS", "30"))
@@ -1048,15 +973,11 @@ class PlivoMediaBridge:
                         continue
                     # Decide what a caller utterance means around the end of the call.
                     if self._pending_hangup_task and not self._pending_hangup_task.done():
-                        #  - a simple "bye/thanks/okay" -> let the hangup proceed (don't re-engage)
-                        #  - a real question / new info -> cancel the hangup and keep talking
-                        #  - a bare interrupt (no text) -> wait for the text before deciding
+                        # bye/thanks/okay -> let the hangup proceed; real question -> cancel it; bare interrupt (no text) -> wait for the text.
                         if etype == "user" and _looks_like_goodbye(event.get("text")):
                             logger.info("Caller said goodbye; letting the hangup proceed")
                         elif etype == "user":
-                            # Once the RSVP is done + goodbye given, ONLY a genuine question re-opens the
-                            # call. A bare "hello / okay / hmm" must NOT re-engage (that re-read the whole
-                            # invitation) — let the hangup proceed and end cleanly.
+                            # Post-goodbye, ONLY a genuine question re-opens the call; a bare "hello/okay/hmm" must NOT re-engage.
                             if _REAL_FOLLOWUP_RE.search(event.get("text") or ""):
                                 self._pending_hangup_task.cancel()
                                 self._pending_hangup_task = None
@@ -1066,10 +987,7 @@ class PlivoMediaBridge:
                             else:
                                 logger.info("Bare greeting/ack after goodbye; letting the hangup proceed")
                     elif etype == "user" and _looks_like_goodbye(event.get("text")):
-                        # Caller signed off but the agent never called end_call -> end it ourselves.
-                        # mute=False: the agent's own farewell reply to this "bye" is still coming —
-                        # it must PLAY (muting here was the "never says goodbye back" bug); the mute
-                        # arms itself on that turn's turn_complete above.
+                        # Caller signed off but the agent never called end_call — end it ourselves. mute=False so the agent's farewell reply still plays; the mute arms on that turn's turn_complete.
                         logger.info("Caller said goodbye; scheduling hangup (agent hadn't ended)")
                         self._schedule_end(mute=False)
         except asyncio.CancelledError:
@@ -1106,9 +1024,7 @@ class PlivoMediaBridge:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            # Plivo answers with keepCallAlive=true, so if OUR side died (e.g. the sender
-            # gave up on a broken socket) the carrier call can stay up with the member
-            # hearing silence. Best-effort hangup — idempotent, errors swallowed by dialer.
+            # Plivo answers with keepCallAlive=true — if our side died the carrier call can stay up with the member hearing silence; best-effort idempotent hangup.
             if self.call_id and not self._hangup_done:
                 self._hangup_done = True
                 try:

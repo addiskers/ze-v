@@ -86,11 +86,7 @@ def _apply_failure(cc, campaign, now, error=None):
     else:
         fields["call_status"] = "pending"
         if int(cc.get("day_attempts") or 0) >= max_day:
-            # today's quota is spent → resume the next CALLING-TZ calendar day at the
-            # campaign's window start. Both the DATE and the TIME must be computed in the
-            # calling timezone (callbacks._tz(), CALLBACK_TZ — the same zone that gates the
-            # dial window): the old 09:00-UTC version resumed at 2:30 PM IST, and near
-            # local midnight the UTC date is still "yesterday" so "+1 day" landed on today.
+            # Daily quota spent → resume next calendar day at window start; date AND time must be computed in the calling tz (UTC math mis-dates near local midnight).
             tz = callbacks._tz()
             start_min = callbacks.campaign_window(campaign)[0]
             now_local = now.astimezone(tz)
@@ -111,9 +107,7 @@ async def _reap_calling(campaign, now):
             if rec.get("ended_at"):
                 outcome = rec.get("rsvp_outcome_status") or ("yes" if rec.get("booking_created") else None)
                 if outcome == "voicemail":
-                    # A machine answered — that's a NO-ANSWER, not a final outcome: keep the
-                    # voicemail marker + call link on the contact, then retry per the campaign
-                    # config exactly like a ring-out (attempts were already bumped at dial).
+                    # Voicemail counts as no-answer, not a final outcome: keep the marker + call link, then retry like a ring-out.
                     eo_db.cc_update(cc["id"], rsvp_outcome="voicemail", last_call_id=rec.get("id"))
                     _apply_failure(cc, campaign, now, error="voicemail")
                 else:
@@ -162,8 +156,6 @@ async def dial_contact_now(campaign_id, cc_id):
         return {"error": "already calling"}
     if not _plivo_ready():
         return {"error": "Plivo is not configured on the server (PLIVO_* / PUBLIC_URL)"}
-    # Re-activate a non-live campaign (scheduled / completed / cancelled) so the runner reaps +
-    # tracks this call. Guard the one-active-at-a-time rule so we never end up with two live.
     prev = campaign.get("status")
     if prev != "live":
         active = eo_db.active_campaign()
@@ -185,16 +177,13 @@ async def _process_campaign(campaign, now):
         return
     if not _plivo_ready():
         return                       # nothing to dial with (dev/local) — leave pending
-    # Calling-hours hard stop (per-campaign window, IST): reap + completion above still run,
-    # but place NO new dials outside the window — contacts stay pending until it opens.
+    # Calling-hours hard stop: no new dials outside the campaign window (reap/completion above still run).
     if not callbacks.in_call_window(campaign.get("call_start_min"), campaign.get("call_end_min")):
         return
     calling = len(eo_db.cc_by_status(campaign["id"], "calling"))
     budget = min(_cfg_int("EO_CAMPAIGN_MAX_PER_TICK", 1),
                  max(0, _cfg_int("EO_CAMPAIGN_MAX_CONCURRENT", 2) - calling))
-    # Global simultaneous-call cap (campaign + callbacks share MAX_LIVE_CALLS).
-    # Reserve a slot for each due callback so callbacks get first claim; the campaign
-    # takes what's left. If nothing's free, dial nothing — contacts stay pending.
+    # Campaign + callbacks share MAX_LIVE_CALLS; reserve a slot per due callback so callbacks get first claim.
     due_callbacks = len(await store.list_pending_callbacks(_iso(now)))
     budget = min(budget, max(0, live.room() - due_callbacks))
     if budget <= 0:

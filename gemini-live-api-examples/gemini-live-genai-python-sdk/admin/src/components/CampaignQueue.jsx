@@ -3,11 +3,8 @@ import { api } from '../api.js'
 import { fmtDate } from './CallLogs.jsx'
 import RemarkCell from './RemarkCell.jsx'
 
-// Upcoming campaign dial queue — the pending/calling contacts the runner will call
-// next across the live/scheduled campaign(s). Sibling of <Callbacks> on the Scheduler
-// page: callbacks are RSVP "call me back later"; this is the campaign auto-dial queue.
-// onMeta (optional) reports { scheduler_enabled, active_campaign } from the queue
-// response up to the parent (pass a stable fn, e.g. a setState).
+// Campaign auto-dial queue (distinct from <Callbacks>, which handles RSVP "call me back later").
+// onMeta (optional, pass a stable fn) reports { scheduler_enabled, active_campaign } to the parent.
 export default function CampaignQueue({ title = 'Callback attempts', desc = '', onMeta }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
@@ -41,8 +38,6 @@ export default function CampaignQueue({ title = 'Callback attempts', desc = '', 
     catch (e) { setErr(e.message) }
   }
 
-  // When this contact rings next: in-flight rows say so; otherwise next_attempt_at,
-  // then a scheduled campaign's start time, then a dash.
   function nextDueCell(c) {
     if (c.call_status === 'calling') return <span className="muted">In progress</span>
     if (c.next_attempt_at) return fmtDate(c.next_attempt_at)

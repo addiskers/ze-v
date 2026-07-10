@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-// Inline-editable remark cell shared by the admin tables. Shows the remark
-// (truncated, full text in the tooltip) or a muted "+ remark" affordance when
-// empty. Click to edit; Enter or blur saves via the async onSave prop
-// (optimistic — reverts and shows the error on failure); Escape cancels.
-// Stops click propagation so it never triggers row clicks (drawer / selection).
+// Inline-editable remark cell: Enter/blur saves via async onSave (optimistic, reverts on failure), Escape cancels; stops click propagation so row clicks never fire.
 export default function RemarkCell({ value, onSave, disabled = false, disabledTitle = '' }) {
   const [text, setText] = useState(value || '')
   const [editing, setEditing] = useState(false)

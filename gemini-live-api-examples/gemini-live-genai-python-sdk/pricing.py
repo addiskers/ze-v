@@ -13,8 +13,7 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# ---- Gemini rates (USD per 1,000,000 tokens, paid tier) --------------------
-# Defaults provided by the operator. Override via env vars if pricing changes.
+# Gemini rates (USD per 1,000,000 tokens, paid tier)
 GEMINI_RATES_PER_1M = {
     "text_in":   float(os.getenv("RATE_GEMINI_TEXT_IN",   "0.75")),
     "audio_in":  float(os.getenv("RATE_GEMINI_AUDIO_IN",  "3.00")),
@@ -23,8 +22,7 @@ GEMINI_RATES_PER_1M = {
     "audio_out": float(os.getenv("RATE_GEMINI_AUDIO_OUT", "12.00")),
 }
 
-# ---- Twilio fallback rate (USD per minute) ---------------------------------
-# Only used when Twilio's real Call.price is not (yet) available.
+# Twilio fallback rate (USD per minute), used only until the real Call.price is available
 TWILIO_PER_MINUTE = float(os.getenv("RATE_TWILIO_PER_MIN", "0.014"))
 
 

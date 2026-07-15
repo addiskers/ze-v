@@ -29,6 +29,15 @@ def test_display_matrix_core_states():
     assert eo_api._contact_display(_cc()) == ("Queued", "amber")
 
 
+def test_cancelled_campaign_overrides_scheduled_retry_label():
+    # A pending retry inside a CANCELLED campaign must show "Cancelled" immediately —
+    # never "Retry scheduled" (which promises a call that will never happen).
+    cc = _cc(attempts=1, next_attempt_at=FUTURE, last_error="no answer")
+    assert eo_api._contact_display(cc, campaign={"status": "cancelled"}) == ("Cancelled", "red")
+    # queued (never-dialed) contacts of a cancelled campaign too
+    assert eo_api._contact_display(_cc(), campaign={"status": "cancelled"}) == ("Cancelled", "red")
+
+
 def test_display_retry_scheduled_names_the_reason():
     label, variant = eo_api._contact_display(
         _cc(attempts=1, next_attempt_at=FUTURE, last_error="no answer"))

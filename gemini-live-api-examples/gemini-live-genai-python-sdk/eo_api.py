@@ -194,6 +194,11 @@ def _contact_display(cc, campaign=None, scheduler_on=True, now=None, now_min=Non
             return (str(outcome), "green")
         return ("Answered — no outcome captured", "amber")
     # pending (and the legacy, never-written 'no_answer')
+    if campaign and campaign.get("status") == "cancelled":
+        # Fallback for rows cancelled BEFORE cancel_campaign cascaded to contacts:
+        # a pending retry in a cancelled campaign is dead — say "Cancelled", never
+        # "Retry scheduled" (which promises a call that will never happen).
+        return ("Cancelled", "red")
     if int(cc.get("attempts") or 0) == 0:
         return ("Queued", "amber")
     # rsvp_outcome='voicemail' is the typed source of truth; last_error text is a fallback for older rows

@@ -446,6 +446,15 @@ def cancel_campaign(campaign_id: int) -> bool:
             "UPDATE campaigns SET status = 'cancelled', updated_at = ? WHERE id = ? AND status IN ('scheduled','live')",
             (_now(), int(campaign_id)),
         )
+        if cur.rowcount:
+            # Cascade: cancel every still-pending recipient too, so no retry stays queued
+            # showing "Retry scheduled" for a call that will never happen — and so a later
+            # per-contact Call-now revival can't resurrect the whole queue.
+            conn.execute(
+                "UPDATE campaign_contacts SET call_status = 'cancelled', next_attempt_at = NULL, "
+                "updated_at = ? WHERE campaign_id = ? AND call_status = 'pending'",
+                (_now(), int(campaign_id)),
+            )
         conn.commit()
         return cur.rowcount > 0
 

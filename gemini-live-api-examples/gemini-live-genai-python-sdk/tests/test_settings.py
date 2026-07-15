@@ -1,7 +1,28 @@
 """Admin-tunable settings — storage (eo_db), precedence (eo_api.effective_settings),
-and the consumers that read them (campaign_runner pacing, callbacks window)."""
+validation, and the consumers that read them (campaign_runner pacing, callbacks window)."""
+
+import pytest
+from fastapi import HTTPException
 
 import eo_api
+
+
+def test_validate_setting_rejects_floats_bools_and_bad_values():
+    # bare int() would silently truncate 4.9→4 and coerce true→1 — must 400 instead
+    for bad in (4.9, True, False, "banana", None, ""):
+        with pytest.raises(HTTPException):
+            eo_api._validate_setting("campaign_max_per_day", bad)
+    with pytest.raises(HTTPException):
+        eo_api._validate_setting("campaign_max_per_day", 11)          # above max
+    with pytest.raises(HTTPException):
+        eo_api._validate_setting("campaign_call_start", "25:99")     # bad HH:MM
+    with pytest.raises(HTTPException):
+        eo_api._validate_setting("agent_voice", "Robot")             # not a choice
+    # valid values coerce cleanly
+    assert eo_api._validate_setting("campaign_max_per_day", "4") == 4
+    assert eo_api._validate_setting("campaign_max_per_day", 4.0) == 4   # whole float ok
+    assert eo_api._validate_setting("campaign_call_start", "10:30") == "10:30"
+    assert eo_api._validate_setting("agent_voice", "Kore") == "Kore"
 
 
 def test_settings_storage_roundtrip(fresh_eo_db):

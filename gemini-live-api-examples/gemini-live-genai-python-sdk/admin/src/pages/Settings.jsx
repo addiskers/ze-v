@@ -7,6 +7,13 @@ import PageHeader from '../components/PageHeader.jsx'
 // endpoints (/admin/settings) are additionally role-gated server-side.
 
 const fmtUsd = (v) => (v == null ? '—' : `$${Number(v).toFixed(2)}`)
+const pick = (obj, keys) => Object.fromEntries(keys.map((k) => [k, obj?.[k]]))
+
+// Each card owns its OWN keys, form state and save — a failure or success in one
+// card can never silently drop or commit edits made in the other.
+const DEF_KEYS = ['campaign_call_start', 'campaign_call_end', 'campaign_max_per_day',
+                  'campaign_days', 'campaign_delay_hours', 'campaign_max_concurrent', 'campaign_max_per_tick']
+const AGENT_KEYS = ['agent_voice', 'agent_language']
 
 const VOICES = [
   { value: 'Aoede', label: 'Aoede — warm female (default)' },
@@ -18,21 +25,24 @@ const LANGUAGES = [
   { value: 'gu-IN', label: 'Gujarati (gu-IN)' },
 ]
 
+const fieldsetStyle = { border: 0, padding: 0, margin: 0, minWidth: 0 }
+
 export default function Settings() {
   const [counts, setCounts] = useState({ contacts: null, campaigns: null })
-  const [summary, setSummary] = useState(null)          // cost stats (admin gets cost fields)
+  const [summary, setSummary] = useState(null)          // cost stats (Superadmin gets cost fields)
   const [activeCampaign, setActiveCampaign] = useState(null)
 
   // Master scheduler switch (queue tables live on the Scheduler page)
   const [enabled, setEnabled] = useState(null)
   const [schedErr, setSchedErr] = useState('')
 
-  // Editable runtime settings (defaults for new campaigns, pacing, agent)
-  const [settings, setSettings] = useState(null)        // effective values from the server
-  const [form, setForm] = useState({})                  // local edits
-  const [saveMsg, setSaveMsg] = useState('')
-  const [saveErr, setSaveErr] = useState('')
-  const [saving, setSaving] = useState(false)
+  // Server snapshot of effective settings + one independent form per card
+  const [settings, setSettings] = useState(null)
+  const [loadErr, setLoadErr] = useState('')
+  const [defForm, setDefForm] = useState(null)
+  const [defMsg, setDefMsg] = useState(''); const [defErr, setDefErr] = useState(''); const [defSaving, setDefSaving] = useState(false)
+  const [agForm, setAgForm] = useState(null)
+  const [agMsg, setAgMsg] = useState(''); const [agErr, setAgErr] = useState(''); const [agSaving, setAgSaving] = useState(false)
 
   // Change password
   const [cur, setCur] = useState('')
@@ -56,8 +66,12 @@ export default function Settings() {
       .then((d) => setEnabled(!!d.scheduler_enabled))
       .catch((e) => setSchedErr(e.message))
     api.get('/admin/settings')
-      .then((d) => { setSettings(d.settings); setForm(d.settings) })
-      .catch((e) => setSaveErr(e.message))
+      .then((d) => {
+        setSettings(d.settings)
+        setDefForm(pick(d.settings, DEF_KEYS))
+        setAgForm(pick(d.settings, AGENT_KEYS))
+      })
+      .catch((e) => setLoadErr(e.message))
   }, [])
 
   async function toggle() {
@@ -71,25 +85,28 @@ export default function Settings() {
     } catch (e) { setSchedErr(e.message) }
   }
 
-  function setF(key, value) {
-    setForm((f) => ({ ...f, [key]: value }))
-    setSaveMsg('')
-  }
+  const dirtyOf = (form) => form && settings && Object.keys(form).some((k) => String(form[k]) !== String(settings[k]))
 
-  const dirty = settings && Object.keys(form).some((k) => String(form[k]) !== String(settings[k]))
-
-  async function saveSettings() {
-    setSaving(true); setSaveErr(''); setSaveMsg('')
+  // Save ONLY this card's changed keys; on success reset ONLY this card's form to the
+  // fresh server snapshot (inputs are disabled while in flight, so no keystrokes race it).
+  async function saveCard(form, keys, setForm, setSaving, setErr, setMsg, okMsg) {
+    setSaving(true); setErr(''); setMsg('')
     try {
       const changed = {}
-      for (const k of Object.keys(form)) {
+      for (const k of keys) {
         if (String(form[k]) !== String(settings[k])) changed[k] = form[k]
       }
       const r = await api.post('/admin/settings', changed)
-      setSettings(r.settings); setForm(r.settings)
-      setSaveMsg('Saved. Campaign defaults apply to new campaigns; pacing applies within ~30s; agent settings apply from the next call.')
-    } catch (e) { setSaveErr(e.message) } finally { setSaving(false) }
+      setSettings(r.settings)
+      setForm(pick(r.settings, keys))
+      setMsg(okMsg)
+    } catch (e) { setErr(e.message) } finally { setSaving(false) }
   }
+
+  const saveDefaults = () => saveCard(defForm, DEF_KEYS, setDefForm, setDefSaving, setDefErr, setDefMsg,
+    'Saved. New campaigns use these defaults; pacing applies within ~30 seconds.')
+  const saveAgent = () => saveCard(agForm, AGENT_KEYS, setAgForm, setAgSaving, setAgErr, setAgMsg,
+    'Saved — applies from the next call.')
 
   async function changePassword() {
     setPwBusy(true); setPwErr(''); setPwMsg('')
@@ -104,12 +121,13 @@ export default function Settings() {
     downloadFile('/calls.csv', 'call_logs.csv').catch((e) => setExportErr(e.message))
   }
 
-  const num = (key, min, max) => (
-    <input type="number" min={min} max={max} value={form[key] ?? ''}
-           onChange={(e) => setF(key, e.target.value)} style={{ width: 90 }} />
+  const num = (form, setForm, key, min, max) => (
+    <input type="number" min={min} max={max} value={form[key] ?? ''} className="input-num"
+           onChange={(e) => { setForm((f) => ({ ...f, [key]: e.target.value })); setDefMsg('') }} />
   )
-  const time = (key) => (
-    <input type="time" value={form[key] ?? ''} onChange={(e) => setF(key, e.target.value)} style={{ width: 130 }} />
+  const time = (form, setForm, key) => (
+    <input type="time" value={form[key] ?? ''} className="input-time"
+           onChange={(e) => { setForm((f) => ({ ...f, [key]: e.target.value })); setDefMsg('') }} />
   )
 
   return (
@@ -180,27 +198,32 @@ export default function Settings() {
               Prefills for new campaigns and live dialer pacing. Existing campaigns keep the values they were created with.
             </div>
           </div>
-          <button className="btn sm" disabled={!dirty || saving} onClick={saveSettings}>{saving ? 'Saving…' : 'Save changes'}</button>
+          <button className="btn sm" disabled={!dirtyOf(defForm) || defSaving} onClick={saveDefaults}>{defSaving ? 'Saving…' : 'Save changes'}</button>
         </div>
-        {saveErr && <div style={{ color: '#fca5a5', fontSize: '0.82rem', marginBottom: 10 }}>{saveErr}</div>}
-        {saveMsg && <div style={{ color: 'var(--green)', fontSize: '0.82rem', marginBottom: 10 }}>{saveMsg}</div>}
-        {!settings ? <div className="muted">Loading…</div> : (
-          <div className="stack" style={{ gap: 12 }}>
-            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-              <div className="row"><label>Calling hours (IST)</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>{time('campaign_call_start')} <span className="muted">to</span> {time('campaign_call_end')}</div>
+        {loadErr && <div style={{ color: '#fca5a5', fontSize: '0.82rem', marginBottom: 10 }}>{loadErr}</div>}
+        {defErr && <div style={{ color: '#fca5a5', fontSize: '0.82rem', marginBottom: 10 }}>{defErr}</div>}
+        {defMsg && <div style={{ color: 'var(--green)', fontSize: '0.82rem', marginBottom: 10 }}>{defMsg}</div>}
+        {!defForm ? (!loadErr && <div className="muted">Loading…</div>) : (
+          <fieldset disabled={defSaving} style={fieldsetStyle}>
+            <div className="stack" style={{ gap: 12 }}>
+              <div className="field-row">
+                <div className="row"><label>Calling hours (IST)</label>
+                  <div className="field-inline">
+                    {time(defForm, setDefForm, 'campaign_call_start')} <span className="muted">to</span> {time(defForm, setDefForm, 'campaign_call_end')}
+                  </div>
+                </div>
+              </div>
+              <div className="field-row">
+                <div className="row"><label>Attempts per day</label>{num(defForm, setDefForm, 'campaign_max_per_day', 1, 10)}</div>
+                <div className="row"><label>Retry for (days)</label>{num(defForm, setDefForm, 'campaign_days', 1, 10)}</div>
+                <div className="row"><label>Retry every (hours)</label>{num(defForm, setDefForm, 'campaign_delay_hours', 0, 720)}</div>
+              </div>
+              <div className="field-row">
+                <div className="row"><label>Max simultaneous calls</label>{num(defForm, setDefForm, 'campaign_max_concurrent', 1, 20)}</div>
+                <div className="row"><label>New dials per tick (~30s)</label>{num(defForm, setDefForm, 'campaign_max_per_tick', 1, 10)}</div>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-              <div className="row"><label>Attempts per day</label>{num('campaign_max_per_day', 1, 10)}</div>
-              <div className="row"><label>Retry for (days)</label>{num('campaign_days', 1, 10)}</div>
-              <div className="row"><label>Retry every (hours)</label>{num('campaign_delay_hours', 0, 720)}</div>
-            </div>
-            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-              <div className="row"><label>Max simultaneous calls</label>{num('campaign_max_concurrent', 1, 20)}</div>
-              <div className="row"><label>New dials per tick (~30s)</label>{num('campaign_max_per_tick', 1, 10)}</div>
-            </div>
-          </div>
+          </fieldset>
         )}
       </div>
 
@@ -212,21 +235,25 @@ export default function Settings() {
               Aria's voice and opening-language bias. Changes apply from the <b>next</b> call — no restart needed.
             </div>
           </div>
-          <button className="btn sm" disabled={!dirty || saving} onClick={saveSettings}>{saving ? 'Saving…' : 'Save changes'}</button>
+          <button className="btn sm" disabled={!dirtyOf(agForm) || agSaving} onClick={saveAgent}>{agSaving ? 'Saving…' : 'Save changes'}</button>
         </div>
-        {!settings ? <div className="muted">Loading…</div> : (
-          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-            <div className="row"><label>Voice</label>
-              <select value={form.agent_voice ?? ''} onChange={(e) => setF('agent_voice', e.target.value)}>
-                {VOICES.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
-              </select>
+        {agErr && <div style={{ color: '#fca5a5', fontSize: '0.82rem', marginBottom: 10 }}>{agErr}</div>}
+        {agMsg && <div style={{ color: 'var(--green)', fontSize: '0.82rem', marginBottom: 10 }}>{agMsg}</div>}
+        {!agForm ? (!loadErr && <div className="muted">Loading…</div>) : (
+          <fieldset disabled={agSaving} style={fieldsetStyle}>
+            <div className="field-row">
+              <div className="row"><label>Voice</label>
+                <select value={agForm.agent_voice ?? ''} onChange={(e) => { setAgForm((f) => ({ ...f, agent_voice: e.target.value })); setAgMsg('') }}>
+                  {VOICES.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
+                </select>
+              </div>
+              <div className="row"><label>Opening language</label>
+                <select value={agForm.agent_language ?? ''} onChange={(e) => { setAgForm((f) => ({ ...f, agent_language: e.target.value })); setAgMsg('') }}>
+                  {LANGUAGES.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+                </select>
+              </div>
             </div>
-            <div className="row"><label>Opening language</label>
-              <select value={form.agent_language ?? ''} onChange={(e) => setF('agent_language', e.target.value)}>
-                {LANGUAGES.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
-              </select>
-            </div>
-          </div>
+          </fieldset>
         )}
       </div>
 

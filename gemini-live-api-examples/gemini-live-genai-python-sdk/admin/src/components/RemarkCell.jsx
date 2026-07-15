@@ -43,12 +43,12 @@ export default function RemarkCell({ value, onSave, disabled = false, disabledTi
       <span onClick={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}
+          className="remark-input"
           value={draft}
           placeholder="Add remark…"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
           onBlur={onBlur}
-          style={{ width: 160, height: 28, fontSize: '0.78rem', padding: '2px 8px' }}
         />
       </span>
     )

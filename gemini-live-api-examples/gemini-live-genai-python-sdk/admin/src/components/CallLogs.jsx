@@ -56,8 +56,8 @@ function RsvpEditor({ call }) {
   if (editing) {
     return (
       <div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <select value={val} onChange={(e) => setVal(e.target.value)}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <select value={val} onChange={(e) => setVal(e.target.value)} style={{ minWidth: 0, width: 'auto', flex: '1 1 130px' }}>
             <option value="" disabled>Pick outcome…</option>
             {RSVP_OUTCOMES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
@@ -265,7 +265,7 @@ export function CallDrawer({ call, onClose }) {
     : null
   return (
     <div className="backdrop" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 540, maxHeight: '85vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ maxWidth: 'min(540px, calc(100vw - 24px))' }} onClick={(e) => e.stopPropagation()}>
         <div className="row-between">
           <h3 style={{ display: 'flex', gap: 8, alignItems: 'center' }}><IconPhone /> {call.caller || call.phone || 'Call'}</h3>
           <button className="btn ghost sm" onClick={onClose}>Close</button>

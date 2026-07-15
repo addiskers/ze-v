@@ -52,7 +52,7 @@ export default function CampaignDetails() {
       {err && <div className="err" style={{ marginTop: -8 }}>{err}</div>}
 
       {c && (
-        <div className="grid stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }}>
+        <div className="grid stat-grid tight">
           {stat.map(([label, val]) => (
             <div className="card stat" key={label}>
               <div className="label">{label}</div>

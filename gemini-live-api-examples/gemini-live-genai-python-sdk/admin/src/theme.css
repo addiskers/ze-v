@@ -35,6 +35,10 @@
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* The page itself must never scroll horizontally — wide content scrolls inside .table-wrap.
+   `clip` (with `hidden` fallback) avoids creating a new scroll container, so sticky bars keep working. */
+html, body { overflow-x: hidden; overflow-x: clip; }
 body {
   margin: 0;
   font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -46,6 +50,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
   letter-spacing: -0.005em;
 }
+body.no-scroll { overflow: hidden; }
 a { color: inherit; text-decoration: none; }
 h1, h2, h3 { letter-spacing: -0.02em; }
 
@@ -99,7 +104,7 @@ label { font-size: 0.72rem; font-weight: 500; color: var(--secondary); display: 
 .btn.sm { height: 31px; padding: 0 11px; font-size: 0.75rem; border-radius: 8px; }
 
 /* App shell */
-.shell { display: flex; min-height: 100vh; background: radial-gradient(1200px 600px at 70% -10%, rgba(124,92,255,0.05), transparent 60%), var(--bg); }
+.shell { display: flex; min-height: 100vh; min-height: 100dvh; background: radial-gradient(1200px 600px at 70% -10%, rgba(124,92,255,0.05), transparent 60%), var(--bg); }
 .sidebar {
   width: var(--sidebar-w); flex: 0 0 var(--sidebar-w); background: var(--bg-2);
   border-right: 1px solid var(--border); display: flex; flex-direction: column;
@@ -135,9 +140,17 @@ label { font-size: 0.72rem; font-weight: 500; color: var(--secondary); display: 
   background: rgba(11, 8, 22, 0.72); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   position: sticky; top: 0; z-index: 20;
 }
-.topbar .page-title { font-size: 1rem; font-weight: 700; }
+.topbar-left { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; }
+#topbar-title { min-width: 0; overflow: hidden; }
+.topbar .page-title { font-size: 1rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topbar .page-sub, .page-sub { font-size: 0.72rem; color: var(--muted); }
-.userchip { display: flex; align-items: center; gap: 11px; }
+.nav-toggle { display: none; }
+.sidebar-backdrop {
+  position: fixed; inset: 0; z-index: 65; background: rgba(6, 4, 13, 0.62);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  animation: fade .15s ease-out; border: 0; padding: 0;
+}
+.userchip { display: flex; align-items: center; gap: 11px; flex-shrink: 0; }
 .avatar {
   width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
   background: linear-gradient(140deg, var(--green-soft), rgba(56,189,248,0.12)); color: var(--green-2);
@@ -147,7 +160,8 @@ label { font-size: 0.72rem; font-weight: 500; color: var(--secondary); display: 
 
 /* Page header */
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
-.page-h1 { margin: 0; font-size: 1.35rem; font-weight: 700; }
+.page-head-text { min-width: 0; }
+.page-h1 { margin: 0; font-size: 1.35rem; font-weight: 700; overflow-wrap: anywhere; }
 .page-desc { margin: 5px 0 0; font-size: 0.83rem; color: var(--muted); }
 .page-actions { display: flex; gap: 10px; flex-shrink: 0; }
 .backlink { display: inline-flex; align-items: center; gap: 5px; font-size: 0.76rem; color: var(--muted); margin-bottom: 8px; transition: color .12s; }
@@ -156,6 +170,7 @@ label { font-size: 0.72rem; font-weight: 500; color: var(--secondary); display: 
 /* Cards / stats */
 .grid { display: grid; gap: 16px; }
 .stat-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.stat-grid.tight { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
 .card, .panel {
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 18px; box-shadow: var(--shadow);
@@ -177,9 +192,32 @@ a.card:hover, .card.clickable:hover { border-color: var(--border-strong); backgr
 .search .ic { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); opacity: .5; pointer-events: none; }
 .spacer { flex: 1 1 auto; }
 
-/* Tables */
-.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow); }
+/* Form field rows (Settings cards) */
+.field-row { display: flex; gap: 24px; flex-wrap: wrap; }
+.field-inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.input-num { width: 90px; }
+.input-time { width: 150px; }   /* fits "10:00 AM" + clock icon in 12h locales */
+.remark-input { width: 160px; height: 28px; font-size: 0.78rem; padding: 2px 8px; }
+
+/* Fixed bottom action bar (Create Campaign) */
+.action-bar {
+  position: fixed; left: var(--sidebar-w); right: 0; bottom: 0;
+  padding: 12px 26px; padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  background: rgba(19, 14, 34, 0.94); border-top: 1px solid var(--border);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; z-index: 30;
+}
+.has-action-bar { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+
+/* Tables — every <table> lives inside .table-wrap: the wrapper scrolls horizontally,
+   the page never does. min-width keeps columns from crushing on phones. */
+.table-wrap {
+  overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
+  max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--card); box-shadow: var(--shadow);
+}
 table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+.table-wrap > table { min-width: 640px; }
 thead th {
   text-align: left; font-size: 0.65rem; text-transform: uppercase; letter-spacing: .055em;
   color: var(--muted); font-weight: 600; padding: 12px 15px; background: var(--surface);
@@ -237,7 +275,13 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--green); 
 
 /* Modal */
 .backdrop { position: fixed; inset: 0; background: rgba(6,4,13,.66); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); z-index: 50; display: grid; place-items: center; padding: 20px; animation: fade .12s ease-out; }
-.modal { background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 16px; width: 100%; max-width: 460px; padding: 24px; box-shadow: var(--shadow-lg); animation: pop .16s ease-out; }
+.modal {
+  background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 16px;
+  width: 100%; max-width: min(460px, calc(100vw - 24px)); padding: 24px;
+  max-height: 90vh; max-height: 90dvh; overflow-y: auto; overscroll-behavior: contain;
+  overflow-wrap: break-word;
+  box-shadow: var(--shadow-lg); animation: pop .16s ease-out;
+}
 .modal h3 { margin: 0 0 3px; font-size: 1.1rem; }
 .modal .sub { font-size: 0.8rem; color: var(--muted); margin-bottom: 18px; }
 .modal .row { margin-bottom: 14px; }
@@ -247,7 +291,11 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--green); 
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 
 /* Login */
-.login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 20px; background: radial-gradient(900px 500px at 50% -10%, rgba(124,92,255,0.08), transparent 60%), var(--bg); }
+.login-wrap {
+  min-height: 100vh; min-height: 100dvh; display: grid; place-items: center;
+  padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  background: radial-gradient(900px 500px at 50% -10%, rgba(124,92,255,0.08), transparent 60%), var(--bg);
+}
 .login-card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 36px 32px; width: 100%; max-width: 386px; box-shadow: var(--shadow-lg); }
 .login-card .brand { justify-content: center; padding: 0 0 20px; }
 .login-card .row { margin-bottom: 15px; }
@@ -261,3 +309,114 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--green); 
 .stack { display: flex; flex-direction: column; gap: 18px; }
 .row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .err { color: #fca5a5; font-size: 0.82rem; }
+
+/* ============================================================================
+   Responsive system
+   — Desktop ≥900px: untouched (fixed sticky sidebar, exactly as before).
+   — <900px: sidebar becomes an off-canvas drawer behind a hamburger; layouts
+     compress; inputs grow to 16px/44px (iOS zoom prevention + touch comfort).
+   — ≤600px: filter toolbars stack; ≤480px: single-column stat grids, compact
+     paddings; ≤380px: two-column form grids collapse.
+   — (pointer: coarse): touch-target sizing independent of viewport width.
+   ========================================================================== */
+
+/* Desktop: no hamburger, no drawer backdrop */
+@media (min-width: 900px) {
+  .nav-toggle, .sidebar-backdrop { display: none; }
+}
+
+@media (max-width: 899.98px) {
+  /* --- Off-canvas drawer --- */
+  .sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    height: 100vh; height: 100dvh;
+    width: min(calc(var(--sidebar-w) + env(safe-area-inset-left)), 86vw);
+    padding-left: env(safe-area-inset-left);
+    z-index: 70;
+    transform: translateX(-102%);
+    visibility: hidden;
+    transition: transform .24s ease, visibility .24s;
+    border-right: 1px solid var(--border-strong);
+  }
+  .sidebar.open { transform: translateX(0); visibility: visible; box-shadow: var(--shadow-lg); }
+  .sidebar-foot { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .nav a { padding: 12px 11px; }
+
+  .nav-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; flex: 0 0 auto; margin-left: -8px;
+    border: 0; border-radius: 10px; background: transparent; color: var(--text-2); cursor: pointer;
+    transition: background .12s, color .12s;
+  }
+  .nav-toggle:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+
+  /* --- Compact topbar / content, safe-area aware --- */
+  .topbar { padding: 0 max(14px, env(safe-area-inset-right)) 0 max(10px, env(safe-area-inset-left)); gap: 10px; }
+  .content { padding: 18px max(16px, env(safe-area-inset-right)) 28px max(16px, env(safe-area-inset-left)); }
+
+  /* --- Headers, panels and utility rows wrap instead of overflowing --- */
+  .page-head, .page-actions, .panel-head, .row-between, .pager { flex-wrap: wrap; }
+  .page-head { margin-bottom: 16px; }
+
+  /* --- Grids --- */
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat-grid.tight { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+  /* --- Forms & touch targets: ≥16px text (no iOS focus zoom), 44px height --- */
+  input, select, textarea { font-size: 16px; height: 44px; }
+  textarea { height: auto; }
+  .toolbar input, .toolbar select { height: 44px; }
+  .remark-input { font-size: 16px; height: 36px; width: 180px; }
+  .btn { min-height: 44px; }
+  .btn.sm { min-height: 36px; }
+  .pager button { min-height: 38px; min-width: 44px; }
+  .field-row { gap: 14px 22px; }
+
+  /* --- Bottom action bar spans the full width (no fixed sidebar) --- */
+  .action-bar { left: 0; padding: 10px max(16px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+
+  /* --- Modals: comfortable on phones --- */
+  .backdrop { padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .modal { padding: 20px 18px; }
+  .modal .actions { flex-wrap: wrap; }
+}
+
+@media (max-width: 600px) {
+  /* Filter toolbars: search takes the full row, filters share rows below */
+  .search { flex: 1 1 100%; }
+  .search input { width: 100%; min-width: 0; }
+  .toolbar select, .toolbar input[type="date"] { flex: 1 1 40%; min-width: 0; }
+  .card, .panel { padding: 16px; }
+  .dropzone { padding: 26px 16px; }
+}
+
+@media (max-width: 480px) {
+  .stat-grid { grid-template-columns: 1fr; }
+  .stat-grid.tight { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .content { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .userchip-meta { display: none; }
+  .modal { padding: 18px 14px; }
+  .login-card { padding: 28px 20px; }
+  /* Settings field rows: one field per row, selects stretch full width */
+  .field-row > .row { flex: 1 1 100%; }
+}
+
+@media (max-width: 380px) {
+  .modal .two { grid-template-columns: 1fr; gap: 10px; }
+  .input-time { width: 140px; }   /* never clip the AM/PM suffix */
+}
+
+/* Touch-first sizing regardless of viewport width */
+@media (pointer: coarse) {
+  .btn { min-height: 44px; }
+  .btn.sm { min-height: 36px; min-width: 44px; }
+  .pager button { min-height: 40px; min-width: 44px; }
+  input[type="checkbox"] { width: 20px; height: 20px; }
+  .toggle { min-height: 44px; }
+  .nav a { padding: 12px 11px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar { transition: none; }
+  .backdrop, .modal, .sidebar-backdrop { animation: none; }
+}

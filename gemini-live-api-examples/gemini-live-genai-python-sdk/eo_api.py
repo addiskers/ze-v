@@ -371,6 +371,30 @@ async def admin_settings_get(request: Request):
     return {"settings": effective_settings()}
 
 
+def _validate_setting(key: str, v):
+    """Coerce + validate one setting value per _SETTING_DEFS; raises HTTPException(400)."""
+    d = _SETTING_DEFS[key]
+    if d["kind"] == "int":
+        # Reject bools and fractional floats explicitly — bare int() would silently
+        # coerce true→1 and truncate 4.9→4 (same contract as _whole_int below).
+        if isinstance(v, bool) or (isinstance(v, float) and not float(v).is_integer()):
+            raise HTTPException(status_code=400, detail=f"{key} must be a whole number (no decimals)")
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"{key} must be a whole number")
+        if not (d["min"] <= v <= d["max"]):
+            raise HTTPException(status_code=400, detail=f"{key} must be between {d['min']} and {d['max']}")
+    elif d["kind"] == "hhmm":
+        if not _hhmm_valid(v):
+            raise HTTPException(status_code=400, detail=f"{key} must be HH:MM (24h)")
+        v = str(v)
+    elif d["kind"] == "choice":
+        if v not in d["choices"]:
+            raise HTTPException(status_code=400, detail=f"{key} must be one of: {', '.join(d['choices'])}")
+    return v
+
+
 @router.post("/admin/settings")
 async def admin_settings_set(request: Request):
     eo_auth.require_eo_admin(request)
@@ -378,24 +402,7 @@ async def admin_settings_set(request: Request):
     unknown = set(body) - set(_SETTING_DEFS)
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown setting: {', '.join(sorted(unknown))}")
-    updates = {}
-    for key, v in body.items():
-        d = _SETTING_DEFS[key]
-        if d["kind"] == "int":
-            try:
-                v = int(v)
-            except (TypeError, ValueError):
-                raise HTTPException(status_code=400, detail=f"{key} must be a whole number")
-            if not (d["min"] <= v <= d["max"]):
-                raise HTTPException(status_code=400, detail=f"{key} must be between {d['min']} and {d['max']}")
-        elif d["kind"] == "hhmm":
-            if not _hhmm_valid(v):
-                raise HTTPException(status_code=400, detail=f"{key} must be HH:MM (24h)")
-            v = str(v)
-        elif d["kind"] == "choice":
-            if v not in d["choices"]:
-                raise HTTPException(status_code=400, detail=f"{key} must be one of: {', '.join(d['choices'])}")
-        updates[key] = v
+    updates = {key: _validate_setting(key, v) for key, v in body.items()}
     if updates:
         eo_db.set_settings(updates)
         logger.info(f"Settings updated: {sorted(updates)}")

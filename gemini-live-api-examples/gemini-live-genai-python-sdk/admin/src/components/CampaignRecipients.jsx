@@ -58,7 +58,7 @@ export default function CampaignRecipients({ campaignId }) {
     <div className="panel">
       <div className="panel-head">
         <h3>Recipients</h3>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
           <div className="search">
             <span className="ic"><IconSearch /></span>
             <input placeholder="Search name / phone…" value={q} onChange={(e) => setQ(e.target.value)} />

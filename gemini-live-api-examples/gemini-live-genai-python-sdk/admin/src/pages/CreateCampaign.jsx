@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
 import ContactUpload from '../components/ContactUpload.jsx'
@@ -38,8 +38,12 @@ export default function CreateCampaign() {
   const [busy, setBusy] = useState(false)
 
   // Prefill the retry/calling-hours fields from the admin-tuned defaults (Settings page).
+  // The fields are only editable inside the Start Campaign modal, so a prefill that
+  // resolves AFTER the modal has opened is dropped — it must never clobber user edits.
+  const startModalOpened = useRef(false)
   useEffect(() => {
     api.get('/campaign-defaults').then((d) => {
+      if (startModalOpened.current) return
       if (d.campaign_delay_hours != null) setDelayH(d.campaign_delay_hours)
       if (d.campaign_max_per_day != null) setMaxDay(d.campaign_max_per_day)
       if (d.campaign_days != null) setDays(d.campaign_days)
@@ -104,7 +108,7 @@ export default function CreateCampaign() {
   }
 
   return (
-    <div className="stack" style={{ paddingBottom: 72 }}>
+    <div className="stack has-action-bar">
       <PageHeader title="Create Campaign" sub="Upload contacts, pick recipients, and launch a calling campaign" />
 
       <ContactUpload step={1} onImported={refresh} />
@@ -112,7 +116,7 @@ export default function CreateCampaign() {
       <div className="panel">
         <div className="panel-head">
           <h3>2. Contacts</h3>
-          <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             {selected.size > 0 && <button className="btn danger sm" onClick={deleteSelected}>Delete from pool ({selected.size})</button>}
             <button className="btn ghost sm" onClick={() => { setAddErr(''); setShowAdd(true) }}>+ Add Contact</button>
           </div>
@@ -123,13 +127,9 @@ export default function CreateCampaign() {
         />
       </div>
 
-      <div style={{
-        position: 'fixed', left: 'var(--sidebar-w)', right: 0, bottom: 0, padding: '12px 26px',
-        background: 'rgba(19,14,34,0.94)', borderTop: '1px solid var(--border)', backdropFilter: 'blur(8px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 30,
-      }}>
+      <div className="action-bar">
         <span className="muted"><b style={{ color: 'var(--text)' }}>{selected.size}</b> of {total} selected</span>
-        <button className="btn" disabled={selected.size === 0} onClick={() => { setErr(''); setShowStart(true) }}>Start Campaign</button>
+        <button className="btn" disabled={selected.size === 0} onClick={() => { setErr(''); startModalOpened.current = true; setShowStart(true) }}>Start Campaign</button>
       </div>
 
       {showStart && (

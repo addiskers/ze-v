@@ -301,13 +301,26 @@ function handleJsonMessage(msg) {
 // Orb visualizer
 let orbCtx = null;
 let orbDpr = 1;
+let orbResizeTimer = null;
 const orbCanvas = document.getElementById("zenon-orb");
 
 function resizeOrb() {
+  // CSS drives the display size (fluid, clamp/vw based); here we only match
+  // the canvas backing store to it, scaled by devicePixelRatio for crispness.
   const rect = orbCanvas.getBoundingClientRect();
-  orbDpr = window.devicePixelRatio || 1;
-  orbCanvas.width = Math.max(1, rect.width * orbDpr);
-  orbCanvas.height = Math.max(1, rect.height * orbDpr);
+  if (!rect.width || !rect.height) return; // hidden — keep last valid buffer
+  orbDpr = Math.max(1, window.devicePixelRatio || 1);
+  const w = Math.max(1, Math.round(rect.width * orbDpr));
+  const h = Math.max(1, Math.round(rect.height * orbDpr));
+  if (orbCanvas.width !== w) orbCanvas.width = w;
+  if (orbCanvas.height !== h) orbCanvas.height = h;
+}
+
+// Debounced so rotation / URL-bar viewport changes don't thrash the canvas
+// buffer mid-animation (the rAF loop keeps drawing at the last good size).
+function scheduleOrbResize() {
+  clearTimeout(orbResizeTimer);
+  orbResizeTimer = setTimeout(resizeOrb, 150);
 }
 
 function analyserLevel(analyser) {
@@ -323,7 +336,8 @@ function startOrb() {
   stopOrb();
   orbCtx = orbCanvas.getContext("2d");
   resizeOrb();
-  window.addEventListener("resize", resizeOrb);
+  window.addEventListener("resize", scheduleOrbResize);
+  window.addEventListener("orientationchange", scheduleOrbResize);
 
   const draw = () => {
     orbRAF = requestAnimationFrame(draw);
@@ -378,7 +392,9 @@ function stopOrb() {
     cancelAnimationFrame(orbRAF);
     orbRAF = null;
   }
-  window.removeEventListener("resize", resizeOrb);
+  clearTimeout(orbResizeTimer);
+  window.removeEventListener("resize", scheduleOrbResize);
+  window.removeEventListener("orientationchange", scheduleOrbResize);
 }
 
 // Connect / mic / end

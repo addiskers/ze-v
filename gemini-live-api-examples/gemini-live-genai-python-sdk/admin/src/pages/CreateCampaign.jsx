@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
 import ContactUpload from '../components/ContactUpload.jsx'
@@ -36,6 +36,17 @@ export default function CreateCampaign() {
   const [callEnd, setCallEnd] = useState('21:00')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+
+  // Prefill the retry/calling-hours fields from the admin-tuned defaults (Settings page).
+  useEffect(() => {
+    api.get('/campaign-defaults').then((d) => {
+      if (d.campaign_delay_hours != null) setDelayH(d.campaign_delay_hours)
+      if (d.campaign_max_per_day != null) setMaxDay(d.campaign_max_per_day)
+      if (d.campaign_days != null) setDays(d.campaign_days)
+      if (d.campaign_call_start) setCallStart(d.campaign_call_start)
+      if (d.campaign_call_end) setCallEnd(d.campaign_call_end)
+    }).catch(() => {})   // endpoint unavailable → keep the hardcoded defaults
+  }, [])
 
   // add-contact modal
   const [showAdd, setShowAdd] = useState(false)

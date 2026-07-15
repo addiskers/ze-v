@@ -229,13 +229,27 @@ class GeminiLive:
         end_sens = (types.EndSensitivity.END_SENSITIVITY_LOW
                     if os.getenv("EO_VAD_END_SENSITIVITY", "HIGH").strip().upper() == "LOW"
                     else types.EndSensitivity.END_SENSITIVITY_HIGH)        # KEEP HIGH: snappy end-of-turn
+        # Voice + opening-language bias are admin-tunable from Settings (eo_db.settings),
+        # env as fallback. Read per session so a change applies to the NEXT call, no restart.
+        def _setting(key, env, default):
+            try:
+                import eo_db
+                v = eo_db.get_setting(key)
+                if v:
+                    return v
+            except Exception:
+                pass
+            return os.getenv(env, default)
+        voice_name = _setting("agent_voice", "AGENT_VOICE", "Aoede")        # "Aoede" warm female; "Kore" if too breathy on 8k phone audio
+        language_code = _setting("agent_language", "AGENT_LANGUAGE", "hi-IN")  # bias the OPENING only; in-call switching is prompt-driven
+
         config = types.LiveConnectConfig(
             response_modalities=[types.Modality.AUDIO],
             speech_config=types.SpeechConfig(
-                language_code="hi-IN",  # bias the OPENING to Hindi; in-call language switching is driven by the prompt
+                language_code=language_code,
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name="Aoede"  # warm female voice (try "Kore" if too breathy on 8k phone audio)
+                        voice_name=voice_name
                     )
                 )
             ),

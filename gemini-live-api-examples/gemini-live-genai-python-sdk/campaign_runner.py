@@ -35,7 +35,23 @@ import store
 logger = logging.getLogger(__name__)
 
 
+# Pacing knobs the admin can change at runtime from Settings (stored in eo_db.settings);
+# env keeps working as the fallback so existing deployments are unchanged.
+_SETTING_KEYS = {
+    "EO_CAMPAIGN_MAX_CONCURRENT": "campaign_max_concurrent",
+    "EO_CAMPAIGN_MAX_PER_TICK": "campaign_max_per_tick",
+}
+
+
 def _cfg_int(name, default):
+    skey = _SETTING_KEYS.get(name)
+    if skey:
+        try:
+            v = eo_db.get_setting(skey)
+            if v is not None:
+                return int(v)
+        except Exception:
+            pass                       # settings table unavailable → env/default below
     try:
         return int(os.getenv(name, str(default)))
     except (TypeError, ValueError):

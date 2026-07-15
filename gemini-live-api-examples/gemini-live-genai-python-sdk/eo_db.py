@@ -108,6 +108,13 @@ CREATE TABLE IF NOT EXISTS campaign_contacts (
 );
 CREATE INDEX IF NOT EXISTS idx_cc_campaign ON campaign_contacts(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_cc_due ON campaign_contacts(call_status, next_attempt_at);
+
+-- Admin-tunable runtime settings (key/value; consumers fall back to env, then code defaults)
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -557,6 +564,32 @@ def cc_update(cc_id: int, **fields) -> None:
     fields["updated_at"] = _now()
     cols = ", ".join(f"{k} = ?" for k in fields)
     _exec(f"UPDATE campaign_contacts SET {cols} WHERE id = ?", tuple(fields.values()) + (int(cc_id),))
+
+
+# Settings (admin-tunable runtime config; eo_api validates, consumers read raw)
+
+def get_setting(key: str, default=None):
+    rows = _rows("SELECT value FROM settings WHERE key = ?", (str(key),))
+    return rows[0]["value"] if rows else default
+
+
+def all_settings() -> dict:
+    return {r["key"]: r["value"] for r in _rows("SELECT key, value FROM settings")}
+
+
+def set_settings(pairs: dict) -> None:
+    if not pairs:
+        return
+    now = _now()
+    conn = get_conn()
+    with _lock:
+        for k, v in pairs.items():
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES (?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                (str(k), str(v), now),
+            )
+        conn.commit()
 
 
 def cc_set_outcome_by_phone(campaign_id: int, phone: str, outcome: str,

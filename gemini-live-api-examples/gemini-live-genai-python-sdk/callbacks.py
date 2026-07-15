@@ -66,9 +66,17 @@ def in_call_window(start_min, end_min, now_min=None):
 
 
 def global_window():
-    """Default calling window (start_min, end_min) for callbacks with no campaign — env-tunable."""
-    return (hhmm_to_min(os.getenv("EO_CALL_WINDOW_START", "09:00"), 540),
-            hhmm_to_min(os.getenv("EO_CALL_WINDOW_END", "21:00"), 1260))
+    """Default calling window (start_min, end_min) for callbacks with no campaign —
+    admin-tunable from Settings (eo_db.settings), env as fallback."""
+    s = e = None
+    try:
+        import eo_db
+        s = eo_db.get_setting("campaign_call_start")
+        e = eo_db.get_setting("campaign_call_end")
+    except Exception:
+        pass                           # settings table unavailable → env/default below
+    return (hhmm_to_min(s or os.getenv("EO_CALL_WINDOW_START", "09:00"), 540),
+            hhmm_to_min(e or os.getenv("EO_CALL_WINDOW_END", "21:00"), 1260))
 
 
 def campaign_window(campaign) -> tuple:

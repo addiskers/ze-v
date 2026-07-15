@@ -8,6 +8,7 @@ callbacks; adds contacts, campaigns, and users (later phases). The Super-Admin
 import csv
 import io
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
@@ -319,6 +320,97 @@ async def users_update(user_id: int, request: Request):
     return {"ok": True}
 
 
+# Admin-tunable runtime settings (stored in eo_db.settings; precedence: stored > env > default).
+# kind: int (min/max), hhmm ("HH:MM"), choice (choices). Superadmin-only to edit.
+_SETTING_DEFS = {
+    # defaults for NEW campaigns + the global callback window
+    "campaign_call_start":     {"kind": "hhmm",   "default": "09:00", "env": "EO_CALL_WINDOW_START"},
+    "campaign_call_end":       {"kind": "hhmm",   "default": "21:00", "env": "EO_CALL_WINDOW_END"},
+    "campaign_delay_hours":    {"kind": "int",    "default": 4, "min": 0, "max": 720},
+    "campaign_max_per_day":    {"kind": "int",    "default": 3, "min": 1, "max": 10},
+    "campaign_days":           {"kind": "int",    "default": 1, "min": 1, "max": 10},
+    # runner pacing (campaign_runner reads these live each tick)
+    "campaign_max_concurrent": {"kind": "int",    "default": 2, "min": 1, "max": 20, "env": "EO_CAMPAIGN_MAX_CONCURRENT"},
+    "campaign_max_per_tick":   {"kind": "int",    "default": 1, "min": 1, "max": 10, "env": "EO_CAMPAIGN_MAX_PER_TICK"},
+    # voice agent (gemini_live reads these per session — applies from the next call)
+    "agent_voice":             {"kind": "choice", "default": "Aoede", "choices": ["Aoede", "Kore"], "env": "AGENT_VOICE"},
+    "agent_language":          {"kind": "choice", "default": "hi-IN", "choices": ["hi-IN", "en-IN", "gu-IN"], "env": "AGENT_LANGUAGE"},
+}
+
+
+def _hhmm_valid(v) -> bool:
+    try:
+        hh, mm = str(v).split(":")
+        return 0 <= int(hh) <= 23 and 0 <= int(mm) <= 59
+    except Exception:
+        return False
+
+
+def effective_settings() -> dict:
+    """Resolved value per setting: stored > env > code default (ints coerced)."""
+    stored = eo_db.all_settings()
+    out = {}
+    for key, d in _SETTING_DEFS.items():
+        v = stored.get(key)
+        if v is None and d.get("env"):
+            v = os.getenv(d["env"]) or None
+        if v is None:
+            v = d["default"]
+        if d["kind"] == "int":
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                v = d["default"]
+        out[key] = v
+    return out
+
+
+@router.get("/admin/settings")
+async def admin_settings_get(request: Request):
+    eo_auth.require_eo_admin(request)
+    return {"settings": effective_settings()}
+
+
+@router.post("/admin/settings")
+async def admin_settings_set(request: Request):
+    eo_auth.require_eo_admin(request)
+    body = await request.json()
+    unknown = set(body) - set(_SETTING_DEFS)
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown setting: {', '.join(sorted(unknown))}")
+    updates = {}
+    for key, v in body.items():
+        d = _SETTING_DEFS[key]
+        if d["kind"] == "int":
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{key} must be a whole number")
+            if not (d["min"] <= v <= d["max"]):
+                raise HTTPException(status_code=400, detail=f"{key} must be between {d['min']} and {d['max']}")
+        elif d["kind"] == "hhmm":
+            if not _hhmm_valid(v):
+                raise HTTPException(status_code=400, detail=f"{key} must be HH:MM (24h)")
+            v = str(v)
+        elif d["kind"] == "choice":
+            if v not in d["choices"]:
+                raise HTTPException(status_code=400, detail=f"{key} must be one of: {', '.join(d['choices'])}")
+        updates[key] = v
+    if updates:
+        eo_db.set_settings(updates)
+        logger.info(f"Settings updated: {sorted(updates)}")
+    return {"ok": True, "settings": effective_settings()}
+
+
+@router.get("/campaign-defaults")
+async def campaign_defaults(request: Request):
+    """Prefill values for the new-campaign form (any authenticated user; non-sensitive)."""
+    eo_auth.require_eo(request)
+    s = effective_settings()
+    return {k: s[k] for k in ("campaign_call_start", "campaign_call_end",
+                              "campaign_delay_hours", "campaign_max_per_day", "campaign_days")}
+
+
 # Dashboard + call logs (cost for Superadmin; Admins see only their calls)
 @router.get("/summary")
 async def eo_summary(request: Request):
@@ -483,9 +575,10 @@ async def campaign_create(request: Request):
     if start_dt < datetime.now(timezone.utc) - timedelta(minutes=2):
         raise HTTPException(status_code=400, detail="Start time is in the past. Pick the current time or later.")
 
-    delay_h = _whole_int(body.get("callback_delay_hours", 4), "Call-back hours", 0, 720)
-    max_day = _whole_int(body.get("callback_max_per_day", 3), "Attempts per day", 1, 10)
-    days = _whole_int(body.get("callback_days", 1), "Call-back days", 1, 10)
+    dflt = effective_settings()        # admin-tuned defaults (Settings page), env/code fallback
+    delay_h = _whole_int(body.get("callback_delay_hours", dflt["campaign_delay_hours"]), "Call-back hours", 0, 720)
+    max_day = _whole_int(body.get("callback_max_per_day", dflt["campaign_max_per_day"]), "Attempts per day", 1, 10)
+    days = _whole_int(body.get("callback_days", dflt["campaign_days"]), "Call-back days", 1, 10)
 
     # calling hours (the night hard-stop) — "HH:MM" IST → minutes-since-midnight
     def _hhmm(v, default):
@@ -494,8 +587,8 @@ async def campaign_create(request: Request):
             return max(0, min(1439, (int(hh) % 24) * 60 + (int(mm) % 60)))
         except Exception:
             return default
-    call_start_min = _hhmm(body.get("call_start", "09:00"), 540)
-    call_end_min = _hhmm(body.get("call_end", "21:00"), 1260)
+    call_start_min = _hhmm(body.get("call_start", dflt["campaign_call_start"]), 540)
+    call_end_min = _hhmm(body.get("call_end", dflt["campaign_call_end"]), 1260)
 
     ids = body.get("contact_ids") or []
     # owner-filtered: an Admin can only attach contacts from their OWN pool

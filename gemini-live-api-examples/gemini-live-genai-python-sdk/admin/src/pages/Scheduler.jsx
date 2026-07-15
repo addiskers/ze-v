@@ -15,7 +15,7 @@ export default function Scheduler() {
 
   return (
     <div className="stack">
-      <PageHeader title="Scheduler" sub="Member-requested callbacks and automatic no-answer retries" />
+      <PageHeader title="Scheduler" sub="Customer-requested callbacks and automatic no-answer retries" />
       {meta && meta.scheduler_enabled === false && (
         <div style={{
           background: 'var(--amber-soft)', color: 'var(--amber)',

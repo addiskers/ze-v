@@ -19,9 +19,18 @@ def test_unknown_status_with_voicemail_wording_coerces_to_voicemail():
     assert _status(outcome_status="unknown", note="reached an answering machine") == "voicemail"
 
 
-def test_unknown_status_falls_back_to_callback_not_no():
-    assert _status(outcome_status="not_interested") == "callback"
+def test_loan_wording_aliases_map_to_raw_enums():
+    # "not_interested" must NEVER coerce to "callback" — that would auto-redial a decliner.
+    assert _status(outcome_status="not_interested") == "no"
+    assert _status(outcome_status="not interested") == "no"
+    assert _status(outcome_status="declined") == "no"
+    assert _status(outcome_status="interested") == "yes"
+    assert _status(outcome_status="lead") == "yes"
+
+
+def test_unknown_status_falls_back_to_callback():
     assert _status(outcome_status="") == "callback"
+    assert _status(outcome_status="gibberish") == "callback"
 
 
 def test_unknown_status_with_attending_flag_is_yes():

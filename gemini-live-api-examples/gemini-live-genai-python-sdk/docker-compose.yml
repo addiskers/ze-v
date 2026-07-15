@@ -1,7 +1,7 @@
 services:
-  eo-radha:
+  zenon:
     build: .
-    container_name: eo-radha
+    container_name: zenon
     env_file:
       - .env
     environment:

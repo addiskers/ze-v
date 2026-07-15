@@ -30,9 +30,9 @@ export default function Login() {
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
         <div className="brand">
-          <div className="logo">EO</div>
+          <div className="logo">Z</div>
           <div>
-            <div className="name">EO AI Calling</div>
+            <div className="name">Zenon AI Calling</div>
             <div className="sub">Admin Platform</div>
           </div>
         </div>

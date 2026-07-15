@@ -36,7 +36,7 @@ export default function Users() {
     <div className="stack">
       <PageHeader
         title="Users"
-        sub="Manage EO admin and agent accounts"
+        sub="Manage Zenon admin and agent accounts"
         actions={<button className="btn" onClick={() => { setFormErr(''); setShow(true) }}>+ Add User</button>}
       />
 
@@ -78,7 +78,7 @@ export default function Users() {
       {show && (
         <Modal
           title="Add User"
-          sub="Create an EO admin or agent account"
+          sub="Create a Zenon admin or agent account"
           onClose={() => !busy && setShow(false)}
           footer={<>
             <button className="btn ghost" disabled={busy} onClick={() => setShow(false)}>Cancel</button>

@@ -24,9 +24,9 @@ const AGENT_NAV = [
 ]
 
 function initials(name, username) {
-  const s = (name || username || 'EO').trim()
+  const s = (name || username || 'ZN').trim()
   const parts = s.split(/\s+/)
-  return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || 'EO'
+  return ((parts[0]?.[0] || '') + (parts[1]?.[0] || '')).toUpperCase() || 'ZN'
 }
 
 export default function Layout() {
@@ -43,9 +43,9 @@ export default function Layout() {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="logo">EO</div>
+          <div className="logo">Z</div>
           <div>
-            <div className="name">EO AI Calling</div>
+            <div className="name">Zenon AI Calling</div>
             <div className="sub">Admin Platform</div>
           </div>
         </div>

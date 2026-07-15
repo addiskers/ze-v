@@ -1,13 +1,17 @@
-# EO AI Calling Platform — deploy notes
+# Zenon — AI Loan Tele-calling Platform — deploy notes
 
-The EO admin platform is added **on top of** the existing GvoxAi app. Nothing about the
-demo changes: `GET /` and the browser `/ws` stay exactly as-is.
+The Zenon admin platform is added **on top of** the existing voice-agent app (Aria, calling on
+behalf of Jio Financial). Nothing about the caller UI changes: `GET /` and the browser `/ws` stay
+exactly as-is.
+
+> Note: file names, env var keys (`EO_*`), the `eo.db` database, and the `eo-data` volume keep
+> their legacy EO names — they are functional and read by code / hold existing data.
 
 ## What runs where (all coexist)
 | URL           | What it is                                   | Auth                          | Cost shown |
 |---------------|----------------------------------------------|-------------------------------|------------|
-| `/`           | Public RSVP **demo** (unchanged)             | none                          | —          |
-| `/admin`      | **EO admin** React SPA (new)                 | EO user login (per-user)      | **never**  |
+| `/`           | Public caller **UI/demo** (unchanged)        | none                          | —          |
+| `/admin`      | **Zenon admin** React SPA (new)              | admin user login (per-user)   | **never**  |
 | `/superadmin` | Old vanilla admin (was `/admin`, URL rename) | shared secret `ANALYTICS_SECRET` | yes     |
 
 ## New Python deps
@@ -27,20 +31,20 @@ FastAPI serves `admin/dist` automatically if present; if it's missing, `/admin` 
 
 ## Environment variables
 Existing vars (Plivo, `PUBLIC_URL`, `GEMINI_API_KEY`, `ANALYTICS_SECRET`, `CALLBACK_*`) are
-unchanged. New optional vars:
+unchanged. Key names keep the legacy `EO_` prefix (read by code — do not rename). New optional vars:
 
 | Var | Default | Purpose |
 |-----|---------|---------|
-| `EO_ADMIN_USER` | `eoadmin` | Username of the first EO admin, seeded **only if the users table is empty**. |
+| `EO_ADMIN_USER` | `eoadmin` | Username of the first Zenon admin, seeded **only if the users table is empty**. |
 | `EO_ADMIN_PASS` | `eoadmin123` | Password for that seed user. **Change in prod**, then change again from the Profile page. |
-| `EO_SESSION_SECRET` | falls back to `ANALYTICS_SECRET` | HMAC key for EO login tokens (14-day expiry). |
+| `EO_SESSION_SECRET` | falls back to `ANALYTICS_SECRET` | HMAC key for admin login tokens (14-day expiry). |
 | `EO_CAMPAIGN_RUNNER_ENABLED` | `true` | Master switch for the campaign dialer loop. |
 | `EO_CAMPAIGN_MAX_CONCURRENT` | `5` | Max simultaneous campaign calls in flight. |
 | `EO_CAMPAIGN_MAX_PER_TICK` | `3` | New campaign dials started per 30s tick (pacing). |
 | `EO_CAMPAIGN_POLL_INTERVAL` | `30` | Runner tick interval (seconds). |
 | `EO_CAMPAIGN_NOANSWER_SECONDS` | `90` | Ring window before a dial with no call record counts as no-answer. |
 
-The EO "Scheduler: ON/OFF" toggle (Dashboard/Scheduler pages) controls **both** the RSVP
+The "Scheduler: ON/OFF" toggle (Dashboard/Scheduler pages) controls **both** the
 callback scheduler and the campaign runner — OFF pauses all outbound dialing.
 
 ## Data
@@ -56,8 +60,9 @@ python main.py            # or: uvicorn main:app --host 0.0.0.0 --port $PORT --w
 On boot you should see: `Callback scheduler started` **and** `Campaign runner started`.
 
 ## First login
-Go to `https://eo.globalvoxinc.com/admin`, sign in with `EO_ADMIN_USER` / `EO_ADMIN_PASS`,
-then create the real users from the **Users** page and change the seed password from **Profile**.
+Go to `https://eo.globalvoxinc.com/admin` (existing deploy host), sign in with
+`EO_ADMIN_USER` / `EO_ADMIN_PASS`, then create the real users from the **Users** page and change
+the seed password from **Profile**.
 
 ---
 
@@ -74,7 +79,7 @@ docker compose logs -f        # expect "Callback scheduler started" + "Campaign 
 ```
 
 **`.env` must set (real values):**
-- `PUBLIC_URL=https://eo.globalvoxinc.com`  ← REQUIRED (Plivo fetches /plivo/answer here)
+- `PUBLIC_URL=https://eo.globalvoxinc.com`  ← REQUIRED (existing deploy host; Plivo fetches /plivo/answer here)
 - `PLIVO_AUTH_ID` / `PLIVO_AUTH_TOKEN` / `PLIVO_FROM_NUMBER`, `GEMINI_API_KEY`, `MODEL`
 - `EO_ADMIN_USER` / `EO_ADMIN_PASS`, `EO_SESSION_SECRET` (long random), `ANALYTICS_SECRET`
 - leave `DATA_DIR` blank — compose sets it to `/var/eo-data` (the persistent volume)

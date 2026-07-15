@@ -114,7 +114,7 @@ export default function CreateCampaign() {
 
       <div style={{
         position: 'fixed', left: 'var(--sidebar-w)', right: 0, bottom: 0, padding: '12px 26px',
-        background: 'rgba(13,19,32,0.94)', borderTop: '1px solid var(--border)', backdropFilter: 'blur(8px)',
+        background: 'rgba(19,14,34,0.94)', borderTop: '1px solid var(--border)', backdropFilter: 'blur(8px)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 30,
       }}>
         <span className="muted"><b style={{ color: 'var(--text)' }}>{selected.size}</b> of {total} selected</span>
@@ -133,7 +133,7 @@ export default function CreateCampaign() {
           {err && <div className="err" style={{ marginBottom: 12 }}>{err}</div>}
           <div className="row">
             <label>Campaign Name</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Varun Dhawan Evening — Batch 1" autoFocus />
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Personal Loan Follow-up — Batch 1" autoFocus />
           </div>
           <div className="row">
             <label>Selected Contacts</label>

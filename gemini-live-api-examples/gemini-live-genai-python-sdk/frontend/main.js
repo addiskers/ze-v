@@ -1,4 +1,4 @@
-// EO Gujarat — "An Evening with Radha" browser client. Talks to the FastAPI server over /ws, which proxies the Gemini Live API.
+// Zenon — Aria, AI loan advisor calling on behalf of Jio Financial. Browser client that talks to the FastAPI server over /ws, which proxies the Gemini Live API.
 
 // DOM
 const statusDiv = document.getElementById("status");
@@ -16,11 +16,12 @@ const chatLog = document.getElementById("chat-log");
 const callTimerEl = document.getElementById("call-timer");
 const orbCaptionEl = document.getElementById("orb-caption");
 
-// RSVP card
-const rsvpCard = document.getElementById("rsvp-card");
-const rsvpEmoji = document.getElementById("rsvp-emoji");
-const rsvpTitle = document.getElementById("rsvp-title");
-const rsvpSub = document.getElementById("rsvp-sub");
+// Lead card
+const leadCard = document.getElementById("lead-card");
+const leadEmoji = document.getElementById("lead-emoji");
+const leadTitle = document.getElementById("lead-title");
+const leadSub = document.getElementById("lead-sub");
+const leadProduct = document.getElementById("lead-product");
 
 // Session-end
 const endEmoji = document.getElementById("end-emoji");
@@ -29,18 +30,70 @@ const endLine = document.getElementById("end-line");
 const outcomeBadge = document.getElementById("outcome-badge");
 const callSummary = document.getElementById("call-summary");
 
-// Greeting nudge sent on connect so Radha speaks first.
+// Greeting nudge sent on connect so Aria speaks first.
 const GREETING_TRIGGER =
-  "[The guest has just answered the call. Greet them now with your invitation.]";
+  "[The call has just connected. You were NOT given the customer's name — never invent one: skip the name check, greet warmly in Hindi, introduce yourself as Aria from Jio Financial, and ask if they need funds for their business (STEP 2).]";
+
+// Call-outcome display map (keys match the tool result's outcome values).
+const OUTCOME_META = {
+  yes: {
+    label: "Interested — a senior member will call back",
+    emoji: "✅",
+    tone: "positive",
+    sub: "Interest captured on this call.",
+    endTitle: "Great news!",
+    endLine: "A senior member from Jio Financial will call back to take this forward.",
+  },
+  no: {
+    label: "Not interested",
+    emoji: "🙏",
+    tone: "neutral",
+    sub: "No follow-up planned — thanks for the time.",
+    endTitle: "Thanks for your time",
+    endLine: "Aria has marked this lead as not interested.",
+  },
+  callback: {
+    label: "Callback requested",
+    emoji: "📞",
+    tone: "info",
+    sub: "Aria has noted a better time to call.",
+    endTitle: "We'll call back",
+    endLine: "Aria has scheduled a callback at a better time.",
+  },
+  voicemail: {
+    label: "Voicemail",
+    emoji: "📨",
+    tone: "neutral",
+    sub: "The call reached voicemail.",
+    endTitle: "We missed you",
+    endLine: "The call went to voicemail — Aria will try again later.",
+  },
+  do_not_contact: {
+    label: "Do not contact",
+    emoji: "🚫",
+    tone: "negative",
+    sub: "This number will not be contacted again.",
+    endTitle: "Understood",
+    endLine: "This number is marked do-not-contact.",
+  },
+  wrong_number: {
+    label: "Wrong number",
+    emoji: "❌",
+    tone: "neutral",
+    sub: "This number doesn't match the intended customer.",
+    endTitle: "Wrong number",
+    endLine: "This number was marked as a wrong number.",
+  },
+};
 
 // State
 let callStartTime = null;
 let callTimerInterval = null;
 let orbRAF = null;
-let radhaSpeaking = false;
+let ariaSpeaking = false;
 let micStarting = false;
 let sessionEnded = false;
-let rsvpData = null; // { attending, guest_name, note }
+let leadData = null; // { outcome, customer_name, loan_interest, note, offer }
 let callTranscript = []; // { role: "user"|"gemini", text, time }
 let currentUserMsg = null;
 let currentGeminiMsg = null;
@@ -56,26 +109,26 @@ const geminiClient = new GeminiClient({
 
     startTimer();
     startOrb();
-    setCaption("Connected", "Say hello…");
+    setCaption("Connected", "Aria is greeting you…");
 
-    // Let EO Gujarat speak first, then open the mic.
+    // Let Aria speak first, then open the mic.
     geminiClient.sendText(GREETING_TRIGGER);
     startMic();
   },
-  onMessage: (event) => {
-    if (typeof event.data === "string") {
+  onMessage: (evt) => {
+    if (typeof evt.data === "string") {
       try {
-        handleJsonMessage(JSON.parse(event.data));
+        handleJsonMessage(JSON.parse(evt.data));
       } catch (e) {
         console.error("Parse error:", e);
       }
     } else {
       // Binary = agent audio
-      if (!radhaSpeaking) {
-        radhaSpeaking = true;
-        setCaption("Speaking…", "EO Gujarat invitation");
+      if (!ariaSpeaking) {
+        ariaSpeaking = true;
+        setCaption("Speaking…", "Aria · Zenon");
       }
-      mediaHandler.playAudio(event.data);
+      mediaHandler.playAudio(evt.data);
     }
   },
   onClose: () => {
@@ -174,24 +227,41 @@ function endTurns() {
   currentGeminiMsg = null;
 }
 
-// RSVP
-function renderRSVP(result) {
-  rsvpData = {
-    attending: !!(result && result.attending),
-    guest_name: (result && result.guest_name) || "",
-    note: (result && result.note) || "",
+// Lead capture
+function renderLead(result) {
+  const r = result || {};
+  // Backend sends the outcome under `outcome_status` (see main.handle_record_rsvp)
+  const outcome = String(r.outcome_status || r.outcome || r.status || "").toLowerCase();
+  leadData = {
+    outcome,
+    customer_name: r.customer_name || r.guest_name || "",
+    loan_interest: r.loan_interest || "",
+    note: r.note || "",
+    offer: r.offer || null, // { brand, agent, products }
   };
-  rsvpCard.classList.remove("pending", "coming", "declined");
-  if (rsvpData.attending) {
-    rsvpCard.classList.add("coming");
-    rsvpEmoji.textContent = "🎉";
-    rsvpTitle.textContent = rsvpData.guest_name ? `See you, ${rsvpData.guest_name}!` : "You're coming!";
-    rsvpSub.textContent = "We can't wait to see you on the 10th.";
+
+  const meta = OUTCOME_META[outcome] || {
+    label: "Outcome recorded",
+    emoji: "📋",
+    tone: "neutral",
+    sub: "Aria captured an outcome on this call.",
+  };
+
+  leadCard.classList.remove("pending", "positive", "info", "neutral", "negative");
+  leadCard.classList.add(meta.tone);
+  leadEmoji.textContent = meta.emoji;
+  leadTitle.textContent = meta.label;
+  leadSub.textContent =
+    outcome === "yes" && leadData.customer_name
+      ? `Noted for ${leadData.customer_name}.`
+      : meta.sub;
+
+  if (leadData.loan_interest) {
+    leadProduct.textContent = leadData.loan_interest;
+    leadProduct.classList.remove("hidden");
   } else {
-    rsvpCard.classList.add("declined");
-    rsvpEmoji.textContent = "💛";
-    rsvpTitle.textContent = "Maybe next time";
-    rsvpSub.textContent = "The EO Gujarat team will follow up with you.";
+    leadProduct.textContent = "";
+    leadProduct.classList.add("hidden");
   }
 }
 
@@ -203,14 +273,14 @@ function handleJsonMessage(msg) {
       break;
     case "interrupted":
       mediaHandler.stopAudioPlayback();
-      radhaSpeaking = false;
+      ariaSpeaking = false;
       endTurns();
       setCaption("Listening…", "Go ahead");
       break;
     case "turn_complete":
-      radhaSpeaking = false;
+      ariaSpeaking = false;
       endTurns();
-      setCaption("Listening…", "Say “Yes” or “No”");
+      setCaption("Listening…", "Hindi, English or Gujarati — go ahead");
       break;
     case "user":
       addChunk("user", msg.text);
@@ -219,7 +289,8 @@ function handleJsonMessage(msg) {
       addChunk("gemini", msg.text);
       break;
     case "tool_call":
-      if (msg.name === "record_rsvp") renderRSVP(msg.result);
+      // "record_rsvp" is the backend tool key — kept as-is for wire compatibility.
+      if (msg.name === "record_rsvp") renderLead(msg.result);
       break;
     case "error":
       appendMessage("system", "Error: " + (msg.error || "unknown"));
@@ -230,7 +301,7 @@ function handleJsonMessage(msg) {
 // Orb visualizer
 let orbCtx = null;
 let orbDpr = 1;
-const orbCanvas = document.getElementById("radha-orb");
+const orbCanvas = document.getElementById("zenon-orb");
 
 function resizeOrb() {
   const rect = orbCanvas.getBoundingClientRect();
@@ -269,33 +340,33 @@ function startOrb() {
     const out = Math.max(analyserLevel(mediaHandler.getOutputAnalyser()), idle);
     const inp = analyserLevel(mediaHandler.getInputAnalyser());
 
-    // Outer glow
+    // Outer glow — electric violet with a cyan mid-band
     const glowR = baseR * (1.55 + out * 1.1);
     const glow = ctx.createRadialGradient(cx, cy, baseR * 0.35, cx, cy, glowR);
-    glow.addColorStop(0, `rgba(91,156,240,${0.3 + out * 0.45})`);
-    glow.addColorStop(0.5, `rgba(233,196,106,${0.1 + out * 0.22})`);
-    glow.addColorStop(1, "rgba(91,156,240,0)");
+    glow.addColorStop(0, `rgba(124,92,255,${0.3 + out * 0.45})`);
+    glow.addColorStop(0.5, `rgba(34,211,238,${0.1 + out * 0.22})`);
+    glow.addColorStop(1, "rgba(124,92,255,0)");
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(cx, cy, glowR, 0, Math.PI * 2); ctx.fill();
 
-    // Guest (mic) ring
+    // Customer (mic) ring — cyan
     if (inp > 0.03) {
-      ctx.strokeStyle = `rgba(244,220,160,${Math.min(0.7, inp * 1.6)})`;
+      ctx.strokeStyle = `rgba(34,211,238,${Math.min(0.7, inp * 1.6)})`;
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(cx, cy, baseR * (1.28 + inp * 0.5), 0, Math.PI * 2); ctx.stroke();
     }
 
-    // Core orb
+    // Core orb — violet gradient
     const coreR = baseR * (1 + out * 0.16);
     const core = ctx.createRadialGradient(cx - coreR * 0.3, cy - coreR * 0.3, coreR * 0.1, cx, cy, coreR);
-    core.addColorStop(0, "#cfe0fb");
-    core.addColorStop(0.6, "#5b9cf0");
-    core.addColorStop(1, "#2f6abf");
+    core.addColorStop(0, "#ded2ff");
+    core.addColorStop(0.6, "#7c5cff");
+    core.addColorStop(1, "#4c2fd6");
     ctx.fillStyle = core;
     ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, Math.PI * 2); ctx.fill();
 
-    // Gold rim
-    ctx.strokeStyle = `rgba(244,220,160,${0.45 + out * 0.4})`;
+    // Soft violet rim
+    ctx.strokeStyle = `rgba(167,139,250,${0.45 + out * 0.4})`;
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, Math.PI * 2); ctx.stroke();
   };
@@ -381,33 +452,33 @@ function showSessionEnd() {
   stopTimer();
   stopOrb();
 
-  let badgeCls, badgeText, emoji, title, line;
-  if (rsvpData && rsvpData.attending) {
-    badgeCls = "coming"; badgeText = "Coming on the 10th";
-    emoji = "🎉"; title = "See you on the 10th!";
-    line = "We're so glad you're coming to the EO Gujarat evening.";
-  } else if (rsvpData && !rsvpData.attending) {
-    badgeCls = "declined"; badgeText = "Not this time";
-    emoji = "💛"; title = "We'll miss you";
-    line = "If you change your mind, the EO Gujarat team will follow up.";
+  const meta = leadData ? OUTCOME_META[leadData.outcome] : null;
+  let badgeTone, badgeText, emoji, title, line;
+  if (meta) {
+    badgeTone = meta.tone; badgeText = meta.label;
+    emoji = meta.emoji; title = meta.endTitle; line = meta.endLine;
+  } else if (leadData) {
+    badgeTone = "neutral"; badgeText = "Outcome recorded";
+    emoji = "📋"; title = "Call ended";
+    line = "Aria captured an outcome on this call.";
   } else {
-    badgeCls = "declined"; badgeText = "No answer recorded";
+    badgeTone = "neutral"; badgeText = "No outcome recorded";
     emoji = "👋"; title = "Call ended";
-    line = "No RSVP was captured on this call.";
+    line = "No lead outcome was captured on this call.";
   }
   endEmoji.textContent = emoji;
   endTitle.textContent = title;
   endLine.textContent = line;
-  outcomeBadge.className = "outcome-badge " + badgeCls;
+  outcomeBadge.className = "outcome-badge " + badgeTone;
   outcomeBadge.textContent = badgeText;
 
-  const decision = rsvpData ? (rsvpData.attending ? "Coming ✓" : "Not coming") : "—";
   let html = `<div class="summary-title">Call summary</div>`;
-  html += summaryItem("Guest", (rsvpData && rsvpData.guest_name) || "—");
-  html += summaryItem("Decision", decision);
+  html += summaryItem("Customer", (leadData && leadData.customer_name) || "—");
+  html += summaryItem("Outcome", meta ? meta.label : "—");
+  if (leadData && leadData.loan_interest) html += summaryItem("Product", leadData.loan_interest);
   html += summaryItem("Duration", getCallDuration());
   html += summaryItem("Exchanges", `${callTranscript.length}`);
-  if (rsvpData && rsvpData.note) html += summaryItem("Note", rsvpData.note);
+  if (leadData && leadData.note) html += summaryItem("Note", leadData.note);
 
   if (callTranscript.length) {
     html += `<div class="tr-collapse" style="margin-top:16px;">
@@ -416,7 +487,7 @@ function showSessionEnd() {
       </button>
       <div class="tr-full">`;
     for (const e of callTranscript) {
-      const roleLabel = e.role === "user" ? "Guest" : "EO Gujarat";
+      const roleLabel = e.role === "user" ? "Customer" : "Aria · Zenon";
       html += `<div class="tr-line tr-${e.role}">
         <span class="tr-time">${escapeHtml(e.time)}</span>
         <span class="tr-role">${roleLabel}:</span>
@@ -439,19 +510,21 @@ function resetUI() {
   mediaHandler.stopAudio();
 
   callStartTime = null;
-  radhaSpeaking = false;
+  ariaSpeaking = false;
   micStarting = false;
   sessionEnded = false;
-  rsvpData = null;
+  leadData = null;
   callTranscript = [];
   currentUserMsg = null;
   currentGeminiMsg = null;
 
   chatLog.innerHTML = '<div class="transcript-empty">The conversation will appear here…</div>';
-  rsvpCard.className = "rsvp-card glass pending";
-  rsvpEmoji.textContent = "💌";
-  rsvpTitle.textContent = "Awaiting your answer";
-  rsvpSub.textContent = "Just say “Yes” or “No”.";
+  leadCard.className = "lead-card glass pending";
+  leadEmoji.textContent = "📋";
+  leadTitle.textContent = "Interest not captured yet";
+  leadSub.textContent = "Aria will record the outcome here.";
+  leadProduct.textContent = "";
+  leadProduct.classList.add("hidden");
   callTimerEl.textContent = "00:00";
   micBtn.classList.add("active");
   micBtn.dataset.active = "true";

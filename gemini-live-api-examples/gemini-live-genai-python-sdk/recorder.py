@@ -251,10 +251,14 @@ class CallRecorder:
             self.call["rsvp_callback_time_text"] = result.get("callback_time_text", "") or ""
             self.call["rsvp_do_not_contact"] = bool(result.get("do_not_contact"))
             self.call["rsvp_accompanying_children"] = result.get("accompanying_children", "") or ""
+            self.call["rsvp_loan_interest"] = result.get("loan_interest", "") or ""
             self.call["rsvp_note"] = result.get("note", "") or ""
-            # The agent's note auto-fills the Remark; remark PATCH is blocked while in_progress, so this never clobbers a human edit
-            if self.call["rsvp_note"]:
-                self.call["remark"] = self.call["rsvp_note"]
+            # The agent's note (and any loan interest) auto-fills the Remark; remark PATCH is blocked while in_progress, so this never clobbers a human edit
+            _li = self.call["rsvp_loan_interest"]
+            _remark = (f"Interested in: {_li}" + (f" — {self.call['rsvp_note']}" if self.call["rsvp_note"] else "")) \
+                if _li else self.call["rsvp_note"]
+            if _remark:
+                self.call["remark"] = _remark
             if result.get("guest_name"):
                 self.call["rsvp_guest_name"] = result.get("guest_name")
             if status == "callback":

@@ -47,18 +47,32 @@ PLIVO_AUTH_TOKEN = os.getenv("PLIVO_AUTH_TOKEN")
 PLIVO_FROM_NUMBER = os.getenv("PLIVO_FROM_NUMBER", "")
 ANALYTICS_SECRET = os.getenv("ANALYTICS_SECRET", "eo2026")
 
-# Event / guest data
+# Offer / customer data
 
-EVENT = {
-    "host": "EO Gujarat",
-    "occasion": "Inaugural evening with Varun Dhawan",
-    "date": "10th July",
-    "city": "Ahmedabad",
+OFFER = {
+    "brand": "Zenon",
+    "agent": "Aria",
+    "on_behalf_of": "Jio Financial",
+    "products": "Business Loan, Loan Against Property (LAP), Loan Top-up, Balance Transfer, Home Loan",
 }
 
+# Loan-wording aliases → the raw outcome enums stored in SQLite and read by the
+# scheduler/campaign logic. Without these, "not_interested" would fall through to
+# the "callback" fallback and auto-redial someone who just declined.
+_STATUS_ALIASES = {
+    "interested": "yes",
+    "lead": "yes",
+    "not_interested": "no",
+    "not interested": "no",
+    "declined": "no",
+    "no_interest": "no",
+}
+
+
 def handle_record_rsvp(**kwargs):
-    """The agent calls this once per call with the RSVP outcome."""
+    """The agent calls this once per call with the loan-call outcome."""
     status = (kwargs.get("outcome_status") or "").strip().lower()
+    status = _STATUS_ALIASES.get(status, status)
     note = (kwargs.get("note") or "").strip().lower()
     vm_markers = ("voicemail", "voice mail", "answering machine", "answer machine")
     if status not in ("yes", "no", "callback", "voicemail", "do_not_contact", "wrong_number"):
@@ -71,24 +85,24 @@ def handle_record_rsvp(**kwargs):
           and not (kwargs.get("callback_time_text") or "").strip()
           and not (kwargs.get("callback_time_iso") or "").strip()
           and any(m in note for m in vm_markers)):
-        # A "callback" with a voicemail note and no requested time is a machine answer, not a member request.
+        # A "callback" with a voicemail note and no requested time is a machine answer, not a customer request.
         status = "voicemail"
     result = {
         "success": True,
         "silent": True,
         "outcome_status": status,
         "attending": status == "yes",
+        "loan_interest": kwargs.get("loan_interest", "") or "",
         "callback_time_text": kwargs.get("callback_time_text", "") or "",
         "callback_time_iso": kwargs.get("callback_time_iso", "") or "",
         "do_not_contact": status == "do_not_contact",
-        "accompanying_children": kwargs.get("accompanying_children", "") or "",
         "guest_name": kwargs.get("guest_name", "") or "",
         "note": kwargs.get("note", "") or "",
-        "event": EVENT,
+        "offer": OFFER,
     }
     # record_rsvp is a blocking tool, so its result prompts one turn; the conditional instruction guarantees exactly one closing.
     result["instruction"] = ("SYSTEM NOTE — never voice any of this, and never mention recording or bookkeeping. "
-                             "The outcome is already saved. If you have said NOTHING to the member about this "
+                             "The outcome is already saved. If you have said NOTHING to the customer about this "
                              "answer yet, speak your ONE brief closing now. If you have already replied at all, "
                              "produce NO audio this turn — do not add to it, rephrase it, repeat it, acknowledge "
                              "anything, or give a second closing.")
@@ -456,7 +470,7 @@ async def plivo_media_stream(websocket: WebSocket):
     bridge = PlivoMediaBridge(
         websocket=websocket,
         gemini_client=gemini_client,
-        text_trigger="[The guest has just answered the call. You were NOT given their name, so do NOT ask 'is that…?' and never invent a name — just greet them warmly and give your invitation.]",
+        text_trigger="[The customer has just answered the call. You were NOT given their name, so do NOT ask 'is that…?' and never invent a name — skip the name check: greet warmly in Hindi, introduce yourself as Aria from Jio Financial, and ask if they need funds for their business (STEP 2).]",
         on_event=broadcast_event,
         resolve_identity=_resolve_identity,
     )
@@ -480,7 +494,7 @@ async def call_me(request: Request):
     """Make Plivo call a phone number and connect to the AI agent.
 
     Optional "name" personalises the greeting for this call (overrides the
-    member directory). If omitted, the directory is used as a fallback.
+    contact directory). If omitted, the directory is used as a fallback.
     """
     body = await request.json()
     to_number = body.get("phone")
@@ -519,7 +533,7 @@ LIVE_DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EO Gujarat · Live Transcript</title>
+<title>Zenon · Live Transcript</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -675,7 +689,7 @@ body::before {
 </head>
 <body>
 <div class="top-bar">
-  <span class="brand">EO Gujarat · Live Transcript</span>
+  <span class="brand">Zenon · Live Transcript</span>
   <div class="status">
     <span class="dot" id="statusDot"></span>
     <span id="statusText">Waiting for call...</span>
@@ -957,7 +971,7 @@ tbody tr:hover{background:rgba(0,212,255,0.05);}
           <th data-k="language">Lang</th>
           <th data-k="status">Status</th>
           <th data-k="booking_created">Coming</th>
-          <th data-k="rsvp_outcome_status">RSVP</th>
+          <th data-k="rsvp_outcome_status">Outcome</th>
           <th data-k="gemini_cost_usd" class="num">Gemini $</th>
           <th data-k="twilio" class="num">Twilio $</th>
           <th data-k="total_cost_usd" class="num">Total $</th>
@@ -1088,7 +1102,7 @@ function renderStats(){
     {label:'Total real cost',value:fmtUSD(s.total_cost_usd),cls:'cy'},
     {label:'Avg cost / call',value:fmtUSD(s.avg_cost_per_call)},
     {label:'This month',value:fmtUSD2((s.this_month||{}).cost_usd),sub:'proj '+fmtUSD2(s.projected_month_cost)},
-    {label:'RSVP yes-rate',value:fmtPct(s.booking_conversion_rate),cls:'gr',sub:(s.bookings||0)+' coming'},
+    {label:'Interested rate',value:fmtPct(s.booking_conversion_rate),cls:'gr',sub:(s.bookings||0)+' leads'},
   ];
   $('stats').innerHTML=cards.map(c=>
     '<div class="stat '+(c.cls||'')+'"><div class="label">'+c.label+'</div><div class="value">'+c.value+'</div>'+

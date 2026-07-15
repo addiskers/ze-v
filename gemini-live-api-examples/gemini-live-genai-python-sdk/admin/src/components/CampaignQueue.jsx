@@ -3,7 +3,7 @@ import { api } from '../api.js'
 import { fmtDate } from './CallLogs.jsx'
 import RemarkCell from './RemarkCell.jsx'
 
-// Campaign auto-dial queue (distinct from <Callbacks>, which handles RSVP "call me back later").
+// Campaign auto-dial queue (distinct from <Callbacks>, which handles the "call me back later" outcome).
 // onMeta (optional, pass a stable fn) reports { scheduler_enabled, active_campaign } to the parent.
 export default function CampaignQueue({ title = 'Callback attempts', desc = '', onMeta }) {
   const [items, setItems] = useState([])

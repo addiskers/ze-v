@@ -23,9 +23,9 @@ LIVE = {"status": "live", "call_start_min": 0, "call_end_min": 0}      # 0==0 �
 def test_display_matrix_core_states():
     assert eo_api._contact_display(_cc(call_status="calling")) == ("In progress", "blue")
     assert eo_api._contact_display(_cc(call_status="failed")) == ("Unreachable — max attempts", "red")
-    assert eo_api._contact_display(_cc(call_status="done", rsvp_outcome="yes")) == ("Attending", "green")
+    assert eo_api._contact_display(_cc(call_status="done", rsvp_outcome="yes")) == ("Interested", "green")
     assert eo_api._contact_display(_cc(call_status="done", rsvp_outcome="voicemail")) == ("Voicemail", "amber")
-    assert eo_api._contact_display(_cc(call_status="done")) == ("Answered — no RSVP captured", "amber")
+    assert eo_api._contact_display(_cc(call_status="done")) == ("Answered — no outcome captured", "amber")
     assert eo_api._contact_display(_cc()) == ("Queued", "amber")
 
 

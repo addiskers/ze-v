@@ -40,26 +40,38 @@ from gemini_live import _SILENT_SCHEDULING
 _RSVP_SILENT = _SILENT_SCHEDULING is not None
 
 # Mutual-goodbye detection: after the agent's goodbye + end_call, a bare "bye/thanks/okay" lets the hangup proceed; a real follow-up still cancels it.
+# Hindi-default calls: Hinglish tokens sit inside the \b groups, but Devanagari alternatives get their
+# OWN un-anchored groups — CPython's \w excludes combining matras (Mc/Mn), so a trailing \b after a
+# matra-final token (क्या, रुको, शुक्रिया…) never matches and the alternative would be dead.
 _QUESTION_RE = re.compile(
     r"[?]|\b(what|whats|when|where|who|whom|which|how|why|can i|could|would you|"
     r"is it|are|do you|does|will|actually|wait|hold on|one (thing|sec|second|"
-    r"question|more)|but|sorry|hello|hi)\b", re.I)
+    r"question|more)|but|sorry|hello|hi|kya|kyu+n?|kab|kaun|kitn[ae]|kaise)\b"
+    r"|क्या|क्यों|कब|कौन|कितन|कैसे|कहाँ|कहां", re.I)
+# NOTE: bare "theek hai / thik hai / ठीक है" is deliberately NOT a goodbye — it's the routine Hindi
+# mid-call "okay" (same reasoning as excluding bare "ok/okay" in English; only "ok bye" counts).
 _GOODBYE_RE = re.compile(
     r"\b(bye+|goodbye|good ?bye|tata|ta ta|thanks|thank you|thankyou|cheers|"
     r"that'?s all|that is all|nothing else|nothing|i'?m done|we'?re done|see you|"
-    r"good ?night|great|perfect|okay bye|ok bye|done)\b", re.I)
+    r"good ?night|great|perfect|okay bye|ok bye|done|"
+    r"dhanyavad|dhanyawad|shukriya)\b"
+    r"|धन्यवाद|शुक्रिया", re.I)
 
 # "Hold on / give me a minute" means stay on THIS call (not a sign-off or callback) — keeps the line open for a grace window (see _hold_until).
 _HOLD_RE = re.compile(
     r"\b(hold on|hold please|please hold|hang on|bear with me|one moment|just a "
     r"(sec|second|minute|moment)|give me (a|one|two|a couple|a few)|one (sec|second|minute|moment)|"
-    r"two (secs|seconds|minutes)|a (minute|moment|sec|second)|wait)\b", re.I)
+    r"two (secs|seconds|minutes)|a (minute|moment|sec|second)|wait|"
+    r"ek (minute|min|second|sec|pal|minat)|do (minute|min)|ruk(iye|o|na|ie)?)\b"
+    r"|एक (मिनट|मिनिट|सेकंड|पल)|दो (मिनट|मिनिट)|रुकिए|रुकिये|रुको|ज़रा रुक|जरा रुक", re.I)
 
 # Used only during the pending-hangup grace window: a genuine question / new info re-opens the call; a bare "hello/okay/hmm" must NOT re-engage the model.
 _REAL_FOLLOWUP_RE = re.compile(
     r"[?]|\b(what|whats|when|where|who|which|how|why|can i|could|would|is it|are you|do you|does|"
-    r"will|register|registration|bring|time|venue|address|dress|kids?|child|children|wife|husband|"
-    r"family|parents?|mother|father|sister|brother|change|cancel|question|but)\b", re.I)
+    r"will|loan|rate|interest|emi|documents?|eligib\w*|amount|tenure|business|property|"
+    r"top ?up|balance|transfer|paisa|paise|byaj|kitn[ae]|kya|kab|kaise|kaun|"
+    r"change|cancel|question|but)\b"
+    r"|क्या|कब|कैसे|कौन|कितन|क्यों|लोन|ब्याज|पैस", re.I)
 
 
 def _looks_like_goodbye(text: str) -> bool:
@@ -67,24 +79,34 @@ def _looks_like_goodbye(text: str) -> bool:
     t = (text or "").strip().lower()
     if not t or _QUESTION_RE.search(t):
         return False
-    if len(re.findall(r"[a-z']+", t)) > 7:          # too long to be a simple sign-off
+    if len(re.findall(r"[^\W\d_]+", t)) > 7:        # too long to be a simple sign-off (Unicode-aware: counts Devanagari words too)
         return False
     return bool(_GOODBYE_RE.search(t))
 
 
 # Within-turn repeat guard: stop feeding duplicate audio when a known closing marker is voiced twice or any verbatim phrase-run repeats inside one turn.
 _CLOSING_MARKERS = (
-    "see you on the", "so glad you", "we'll miss you", "we will miss you",
-    "drop all the details", "receive all the details", "details on the whatsapp",
-    "details on your whatsapp", "on the whatsapp group",
-    "anything else i can help", "look forward to seeing you",
+    "thank you for your time", "have a great day", "have a good day",
+    "senior member will call", "anything else i can help",
+    "समय के लिए धन्यवाद", "आपका दिन शुभ हो", "આભાર",
+    "थोड़ी ही देर में call", "senior member आपको",
 )
 
 
+def _norm_turn_text(text: str) -> str:
+    """Normalize for closing-repeat matching. \\w keeps Devanagari/Gujarati LETTERS but CPython's
+    \\w excludes combining matras (Mc/Mn), which get space-stripped — so the MARKERS must be run
+    through this same normalization or the Indic ones could never match the normalized turn text."""
+    t = re.sub(r"[^\w ]", " ", (text or "").lower())
+    return re.sub(r"\s+", " ", t).strip()
+
+
+_CLOSING_MARKERS_NORM = tuple(m for m in (_norm_turn_text(m) for m in _CLOSING_MARKERS) if m)
+
+
 def _has_closing_repeat(turn_text: str) -> bool:
-    t = re.sub(r"[^a-z0-9 ]", " ", (turn_text or "").lower())
-    t = re.sub(r"\s+", " ", t).strip()
-    if any(t.count(m) >= 2 for m in _CLOSING_MARKERS):
+    t = _norm_turn_text(turn_text)
+    if any(t.count(m) >= 2 for m in _CLOSING_MARKERS_NORM):
         return True
     # General loop: any run of 6 consecutive words that appears twice in the same turn = spiralling.
     words = t.split()
@@ -294,7 +316,7 @@ class PlivoMediaBridge:
         # Real-time caller voice-activity leads the laggy transcription "user" events; starts at 0.0 so it reads "stale" until real speech.
         self._last_caller_audio = 0.0            # monotonic ts of the last VOICED inbound frame
         self._hold_until = 0.0                   # don't idle-hangup while now < this (caller asked to hold)
-        self.first_name = ""                     # resolved member first name (for personalised nudges)
+        self.first_name = ""                     # resolved customer first name (for personalised nudges)
         self._hangup_done = False                # dialer.hangup_call already issued for this call
         self._last_user_event = 0.0              # monotonic ts of the last "user" transcription event
         self._last_agent_audio = 0.0             # monotonic ts of the last agent audio chunk
@@ -596,11 +618,11 @@ class PlivoMediaBridge:
                             self._connect_tone_task = asyncio.create_task(self._play_connect_tone())
                         # Opening trigger stays INSIDE the once-only guard: a duplicate Plivo `start` must NOT re-send it, or the agent re-reads its whole opening mid-call.
                         if first_name:
-                            trigger = (f"[The guest has just answered. Their first name is {first_name}. "
-                                       f"Begin THE OPENING: your first turn is EXACTLY "
-                                       f'"Hello! Am I speaking to {first_name}?" — say ONLY that, then STOP '
-                                       f"and wait. Do NOT give the invitation or introduce yourself until "
-                                       f"you know who answered. Use the name naturally, never overuse it.]")
+                            trigger = (f"[The customer has just answered. Their first name is {first_name}. "
+                                       f"Begin STEP 1: your first turn is EXACTLY "
+                                       f'"नमस्ते, क्या मेरी बात {first_name} जी से हो रही है?" — say ONLY that, then STOP '
+                                       f"and wait. Do NOT introduce yourself or mention loans until they confirm "
+                                       f"it's them. Use the name naturally, never overuse it.]")
                         else:
                             trigger = self.text_trigger
                         await self.text_input_queue.put(trigger)
@@ -787,7 +809,7 @@ class PlivoMediaBridge:
                     logger.info(f"Greeting not spoken after {now - self._greeting_sent_at:.1f}s; "
                                 f"pushing the agent to speak")
                     await self.text_input_queue.put(
-                        "[Speak your opening line NOW — the member is waiting on a silent line.]")
+                        "[Speak your opening line NOW — the customer is waiting on a silent line.]")
                     continue
                 if self._pending_hangup_task and not self._pending_hangup_task.done():
                     continue                       # already ending
@@ -812,7 +834,7 @@ class PlivoMediaBridge:
                         logger.info(f"Agent silent {now - self._last_agent_audio:.0f}s since the "
                                     f"caller spoke; prompting it to reply")
                         await self.text_input_queue.put(
-                            "[The member just said something and is waiting. If you caught it, "
+                            "[The customer just said something and is waiting. If you caught it, "
                             "reply NOW; if you did not catch it, politely ask them to repeat.]")
                         continue
                     quiet_for = now - max(self._last_caller_audio, self._last_agent_audio,
@@ -824,12 +846,13 @@ class PlivoMediaBridge:
                         self._silence_nudged = True
                         self._silence_nudge_at = now
                         self._silence_nudge_count += 1
-                        who = f"'{self.first_name}, are you still there? I can't hear you.'" \
-                            if self.first_name else "'Hello — are you still there? I can't hear you.'"
+                        who = f"'{self.first_name} जी, क्या आप सुन पा रहे हैं?'" \
+                            if self.first_name else "'जी, क्या आप सुन पा रहे हैं?'"
                         logger.info(f"Quiet for {quiet_for:.0f}s; injecting are-you-still-there nudge "
                                     f"({self._silence_nudge_count}/{nudge_max})")
                         await self.text_input_queue.put(
-                            f"[The line has gone quiet — warmly ask ONCE, {who} Then wait silently.]")
+                            f"[The line has gone quiet — politely ask ONCE, {who} (or its equivalent in the "
+                            f"language the call is locked to). Then wait silently.]")
                         continue
                     if (self._silence_nudged and not self._silence_wrapup_at
                             and self._last_caller_audio < self._silence_nudge_at
@@ -920,7 +943,7 @@ class PlivoMediaBridge:
                             # Silent RSVP can't double the closing; only risk is a MUTE record — nudge it to speak once.
                             if not self._spoke_since_user:
                                 await self.text_input_queue.put(
-                                    "[Recorded. You have NOT said anything to the member about this answer yet "
+                                    "[Recorded. You have NOT said anything to the customer about this answer yet "
                                     "— say your ONE short closing now, then stop.]")
                         elif self._spoke_since_user:
                             # Blocking fallback (<2.x): the result forces one more turn — the agent already spoke, so drop that filler turn's audio.

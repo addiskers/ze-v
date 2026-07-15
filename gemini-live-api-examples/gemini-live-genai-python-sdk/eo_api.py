@@ -152,8 +152,8 @@ def _owns_or_admin(user, campaign) -> bool:
 # Display statuses (labels only — raw enums stay for logic/actions)
 # variant maps to the SPA pill palette: green | blue | amber | red
 _RSVP_LABELS = {
-    "yes": ("Attending", "green"),
-    "no": ("Declined", "red"),
+    "yes": ("Interested", "green"),
+    "no": ("Not interested", "red"),
     "callback": ("Callback requested", "amber"),
     "voicemail": ("Voicemail", "amber"),
     "do_not_contact": ("Do not contact", "red"),
@@ -192,7 +192,7 @@ def _contact_display(cc, campaign=None, scheduler_on=True, now=None, now_min=Non
             return _RSVP_LABELS[outcome]
         if outcome:
             return (str(outcome), "green")
-        return ("Answered — no RSVP captured", "amber")
+        return ("Answered — no outcome captured", "amber")
     # pending (and the legacy, never-written 'no_answer')
     if int(cc.get("attempts") or 0) == 0:
         return ("Queued", "amber")
@@ -355,7 +355,7 @@ async def eo_calls_csv(request: Request):
     buf = io.StringIO()
     # Deliberately limited export columns — everything else is on the grid.
     cols = ["contact_name", "caller", "started_at", "status", "rsvp_outcome_status", "duration_seconds", "remark"]
-    headers = ["Name", "Phone", "Date/Time", "Status", "RSVP", "Duration (s)", "Remark"]
+    headers = ["Name", "Phone", "Date/Time", "Status", "Outcome", "Duration (s)", "Remark"]
     w = csv.writer(buf)
     w.writerow(headers)
     for c in items:
@@ -787,11 +787,11 @@ async def eo_call_outcome(call_id: str, request: Request):
     if scope is not None and str(call.get("campaign_id") or "") not in scope:
         raise HTTPException(status_code=404, detail="Call not found")
     if call.get("status") == "in_progress":
-        raise HTTPException(status_code=409, detail="Call is still in progress — edit the RSVP once it ends")
+        raise HTTPException(status_code=409, detail="Call is still in progress — edit the outcome once it ends")
     body = await request.json()
     outcome = str((body or {}).get("outcome") or "").strip().lower()
     if outcome not in _RSVP_LABELS:
-        raise HTTPException(status_code=400, detail="Pick a valid RSVP outcome")
+        raise HTTPException(status_code=400, detail="Pick a valid outcome")
     _apply_manual_outcome(call, outcome, user.get("username") or "")
     await store.save_call(call)
     cid, caller = call.get("campaign_id"), (call.get("caller") or "").strip()

@@ -26,11 +26,11 @@ export function fmtCost(v) {
 }
 
 const RSVP_OUTCOMES = [
-  ['yes', 'Attending'], ['no', 'Declined'], ['callback', 'Callback requested'],
+  ['yes', 'Interested'], ['no', 'Not interested'], ['callback', 'Callback requested'],
   ['voicemail', 'Voicemail'], ['do_not_contact', 'Do not contact'], ['wrong_number', 'Wrong number'],
 ]
 
-// Editable RSVP: shows the captured outcome; Edit → select + Save overwrites it
+// Editable outcome: shows the captured outcome; Edit → select + Save overwrites it
 // (PATCH /calls/{id}/outcome). Locked while the call is in progress.
 function RsvpEditor({ call }) {
   const [editing, setEditing] = useState(false)
@@ -72,7 +72,7 @@ function RsvpEditor({ call }) {
     <div>
       <span>{label}</span>
       <button className="btn ghost sm" style={{ marginLeft: 8 }} disabled={locked}
-        title={locked ? 'Available once the call ends' : 'Overwrite the captured RSVP'}
+        title={locked ? 'Available once the call ends' : 'Overwrite the captured outcome'}
         onClick={() => setEditing(true)}>Edit</button>
       {editedBy && <div className="muted" style={{ fontSize: '0.7rem', marginTop: 2 }}>edited by {editedBy}</div>}
     </div>
@@ -195,7 +195,7 @@ export default function CallLogs({ campaignId, title = 'Call Logs', showCampaign
               {th('duration_seconds', 'Duration', 'num')}
               {th('language', 'Language')}
               {th('status', 'Status')}
-              <th className="no-sort">RSVP</th>
+              <th className="no-sort">Outcome</th>
               <th className="no-sort">Remark</th>
               {isAdmin && th('total_cost_usd', 'Cost', 'num')}
             </tr>
@@ -273,7 +273,7 @@ export function CallDrawer({ call, onClose }) {
         <div className="sub">{fmtDate(call.started_at)} · {call.source} · {fmtDur(call.duration_seconds)}</div>
         <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: 14 }}>
           <div><label>Status</label><StatusPill call={call} /></div>
-          <div><label>RSVP</label><RsvpEditor key={call.id || call.call_sid} call={call} /></div>
+          <div><label>Outcome</label><RsvpEditor key={call.id || call.call_sid} call={call} /></div>
           {call.campaign_name && <div><label>Campaign</label>{call.campaign_name}</div>}
           {call.language && <div><label>Language</label>{call.language}</div>}
           <div style={{ gridColumn: '1 / -1' }}>
@@ -325,7 +325,7 @@ export function CallDrawer({ call, onClose }) {
             : Array.isArray(msgs) && msgs.length ? msgs.map((m, i) => (
               <div key={i} style={{ fontSize: '0.82rem' }}>
                 <b style={{ color: (m.role === 'user' || m.speaker === 'user') ? 'var(--blue)' : 'var(--green)' }}>
-                  {(m.role || m.speaker) === 'user' ? 'Caller' : 'GvoxAi'}:
+                  {(m.role || m.speaker) === 'user' ? 'Caller' : 'Aria'}:
                 </b>{' '}
                 {m.text || m.content || m.transcript}
               </div>

@@ -83,8 +83,38 @@ def test_looks_like_goodbye():
 
 
 def test_has_closing_repeat_detects_doubled_closing():
-    assert _has_closing_repeat("see you on the tenth! ... see you on the tenth!") is True
-    assert _has_closing_repeat("lovely, see you on the tenth then") is False
+    assert _has_closing_repeat("thank you for your time! ... thank you for your time!") is True
+    assert _has_closing_repeat("thank you for your time, have a great day") is False
+    # Devanagari closings must be caught too (the old [^a-z0-9 ] strip made this guard inert on Hindi)
+    assert _has_closing_repeat("आपके समय के लिए धन्यवाद! ... आपके समय के लिए धन्यवाद, दिन शुभ हो!") is True
+    # Short Indic markers must match via the NORMALIZED marker list (matras are not \w in CPython,
+    # so un-normalized markers could never appear in the matra-stripped turn text)
+    assert _has_closing_repeat("આભાર જી, આભાર!") is True
+    assert _has_closing_repeat("hamare senior member आपको call करेंगे — जी, senior member आपको jaldi call करेंगे") is True
+
+
+def test_hindi_guard_tokens_fire_despite_matras():
+    """Trailing \\b never matches after a matra-final Devanagari token (matras are Mc/Mn, not \\w) —
+    the Indic alternatives live in their own un-anchored regex groups so these must all fire."""
+    assert ph._QUESTION_RE.search("क्या आप कल कॉल करेंगे")
+    assert ph._QUESTION_RE.search("कितने बजे")
+    assert ph._GOODBYE_RE.search("शुक्रिया जी")
+    assert ph._HOLD_RE.search("रुको")
+    assert ph._HOLD_RE.search("एक मिनट")
+    assert ph._REAL_FOLLOWUP_RE.search("कितना ब्याज लगेगा")
+    # question guard must beat goodbye on a Hindi question containing "धन्यवाद"
+    assert _looks_like_goodbye("धन्यवाद कितने बजे कॉल आएगा") is False
+
+
+def test_hindi_okay_ack_is_not_a_goodbye():
+    """Bare 'theek hai' (= 'okay') is the routine Hindi mid-call ack — it must never
+    schedule a hangup (same principle as excluding bare 'ok/okay' in English)."""
+    assert _looks_like_goodbye("theek hai") is False
+    assert _looks_like_goodbye("haan theek hai batao") is False
+    assert _looks_like_goodbye("अच्छा ठीक है") is False
+    # real sign-offs still count
+    assert _looks_like_goodbye("ok bye") is True
+    assert _looks_like_goodbye("धन्यवाद") is True
 
 
 # Goodbye playback: scheduling a hangup must not mute the farewell
@@ -232,7 +262,7 @@ def test_silence_nudge_fires_once_then_escalates(monkeypatch):
         return msgs
 
     msgs = asyncio.run(run())
-    still_there = [m for m in msgs if "still there" in m]
+    still_there = [m for m in msgs if "gone quiet" in m]
     wrapups = [m for m in msgs if "seems dead" in m]
     assert len(still_there) == 1, f"nudge must fire exactly once, got {msgs}"
     assert len(wrapups) == 1, f"expected one wrap-up escalation, got {msgs}"
@@ -384,7 +414,7 @@ def test_silence_nudge_fires_even_when_turn_open_flag_is_stuck(monkeypatch):
         msgs = []
         while not b.text_input_queue.empty():
             msgs.append(b.text_input_queue.get_nowait())
-        return [m for m in msgs if "still there" in m]
+        return [m for m in msgs if "gone quiet" in m]
 
     assert len(asyncio.run(run())) == 1
 
@@ -416,7 +446,7 @@ def test_silence_nudge_respects_cooldown_after_noise_reset(monkeypatch):
         msgs = []
         while not b.text_input_queue.empty():
             msgs.append(b.text_input_queue.get_nowait())
-        return [m for m in msgs if "still there" in m]
+        return [m for m in msgs if "gone quiet" in m]
 
     assert asyncio.run(run()) == []                   # cooldown blocks the re-ask
 

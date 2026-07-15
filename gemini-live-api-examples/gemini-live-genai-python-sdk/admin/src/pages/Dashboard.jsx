@@ -21,10 +21,10 @@ export default function Dashboard() {
 
   return (
     <div className="stack">
-      <PageHeader title="Dashboard" sub="Overview of your EO calling activity" />
+      <PageHeader title="Dashboard" sub="Overview of your Zenon calling activity" />
 
       {active && (
-        <Link to={`/campaigns/${active.id}`} className="card" style={{ display: 'block', borderColor: 'rgba(16,185,129,0.35)' }}>
+        <Link to={`/campaigns/${active.id}`} className="card" style={{ display: 'block', borderColor: 'rgba(124,92,255,0.35)' }}>
           <div className="row-between">
             <div>
               <div className="label" style={{ color: 'var(--green)' }}>
@@ -58,9 +58,9 @@ export default function Dashboard() {
           <div className="sub">{s ? `${s.total_seconds || 0}s across all calls` : ''}</div>
         </div>
         <div className="card stat">
-          <div className="label">RSVP Yes-Rate</div>
+          <div className="label">Interested Rate</div>
           <div className="value">{s ? `${yesRate}%` : '—'}</div>
-          <div className="sub">{s ? `${s.bookings || 0} coming` : ''}</div>
+          <div className="sub">{s ? `${s.bookings || 0} interested` : ''}</div>
         </div>
       </div>
 

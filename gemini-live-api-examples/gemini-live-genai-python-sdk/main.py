@@ -1380,12 +1380,17 @@ async def admin_calls_csv(request: Request):
     attempts = eo_db.attempts_by_campaign_phone(
         [(c.get("campaign_id"), c.get("caller")) for c in data["items"]
          if c.get("campaign_id") and c.get("caller")])
+    # Per-person talk time across every call in this export (all attempts summed).
+    totals = {}
+    for c in data["items"]:
+        key = (c.get("campaign_id"), c.get("caller"))
+        totals[key] = totals.get(key, 0) + int(c.get("duration_seconds") or 0)
     buf = io.StringIO()
     # `outcome` is the display label ("Interested"/"Voicemail"…), not the raw yes/no enum;
     # `attempts` = the campaign recipient's dial count (first dial + retries).
     cols = ["started_at", "call_sid", "source", "caller", "duration_seconds",
-            "language", "status", "outcome", "attempts", "gemini_cost_usd",
-            "twilio_price_usd", "total_cost_usd", "cost_estimated"]
+            "total_duration_seconds", "language", "status", "outcome", "attempts",
+            "gemini_cost_usd", "twilio_price_usd", "total_cost_usd", "cost_estimated"]
     writer = csv.writer(buf)
     writer.writerow(cols)
     for c in data["items"]:
@@ -1394,7 +1399,7 @@ async def admin_calls_csv(request: Request):
                    or ("Interested" if c.get("booking_created") else None))
         writer.writerow([
             c.get("started_at"), c.get("call_sid"), c.get("source"), c.get("caller"),
-            c.get("duration_seconds"), c.get("language"), c.get("status"),
+            c.get("duration_seconds"), totals[(cid, phone)], c.get("language"), c.get("status"),
             outcome, attempts.get((int(cid), str(phone))) if cid and phone else None,
             c.get("gemini_cost_usd"),
             (c.get("twilio") or {}).get("price_usd"), c.get("total_cost_usd"),

@@ -261,7 +261,7 @@ export default function Settings() {
         <div className="panel-head">
           <div>
             <h3>Export Data</h3>
-            <div className="muted" style={{ fontSize: '0.78rem', marginTop: 2 }}>Download every call log as CSV (name, phone, time, status, outcome, duration, language, attempts, remark).</div>
+            <div className="muted" style={{ fontSize: '0.78rem', marginTop: 2 }}>Download every call log as CSV (name, phone, time, status, outcome, duration, total duration, language, attempts, remark).</div>
           </div>
           <button className="btn sm" onClick={exportAll}>Export call logs (CSV)</button>
         </div>

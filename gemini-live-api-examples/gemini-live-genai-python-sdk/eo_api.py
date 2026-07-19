@@ -456,14 +456,22 @@ async def eo_calls_csv(request: Request):
     filters["limit"] = None
     data = await store.list_calls(filters)
     items = _label_and_strip(data["items"], include_cost)
+    attempts = eo_db.attempts_by_campaign_phone(
+        [(c["campaign_id"], c["caller"]) for c in items if c.get("campaign_id") and c.get("caller")])
     buf = io.StringIO()
-    # Deliberately limited export columns — everything else is on the grid.
-    cols = ["contact_name", "caller", "started_at", "status", "rsvp_outcome_status", "duration_seconds", "remark"]
-    headers = ["Name", "Phone", "Date/Time", "Status", "Outcome", "Duration (s)", "Remark"]
+    # Mirrors the grid: Outcome is the display label ("Interested"/"Voicemail"…), never the
+    # raw yes/no enum; Attempts = the recipient's dial count (first dial + retries).
+    headers = ["Name", "Phone", "Date/Time", "Status", "Outcome", "Duration (s)",
+               "Language", "Attempts", "Remark"]
     w = csv.writer(buf)
     w.writerow(headers)
     for c in items:
-        w.writerow([c.get(k) for k in cols])
+        cid, phone = c.get("campaign_id"), c.get("caller")
+        outcome = c.get("rsvp_outcome_label") or ("Interested" if c.get("booking_created") else None)
+        w.writerow([c.get("contact_name"), phone, c.get("started_at"), c.get("status"),
+                    outcome, c.get("duration_seconds"), c.get("language"),
+                    attempts.get((int(cid), str(phone))) if cid and phone else None,
+                    c.get("remark")])
     return Response(content=buf.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": "attachment; filename=call_logs.csv"})
 

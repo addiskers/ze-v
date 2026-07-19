@@ -668,6 +668,28 @@ def names_by_campaign_phone(pairs) -> dict:
     return out
 
 
+def attempts_by_campaign_phone(pairs) -> dict:
+    """(campaign_id, phone) -> dial attempts for that recipient (first dial + retries).
+    Newest row wins per pair. Batch lookup so a CSV export resolves in one query."""
+    pairs = [(int(c), str(p)) for c, p in pairs if c and p]
+    if not pairs:
+        return {}
+    cids = sorted({c for c, _ in pairs})
+    phones = sorted({p for _, p in pairs})
+    cph = ",".join("?" * len(cids))
+    pph = ",".join("?" * len(phones))
+    rows = _rows(
+        f"SELECT campaign_id, phone, attempts FROM campaign_contacts "
+        f"WHERE campaign_id IN ({cph}) AND phone IN ({pph}) ORDER BY id ASC",
+        tuple(cids) + tuple(phones))
+    wanted, out = set(pairs), {}
+    for r in rows:                                    # ORDER BY id ASC → later row overwrites = newest
+        key = (int(r["campaign_id"]), str(r["phone"]))
+        if key in wanted:
+            out[key] = int(r.get("attempts") or 0)
+    return out
+
+
 def phones_by_name_query(q: str) -> set:
     """Phones whose contact NAME matches q, across the contacts pool and every campaign's
     recipient names. Powers name search on call grids (call records store only the phone)."""

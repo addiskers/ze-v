@@ -1257,15 +1257,11 @@ async function exportCall(id){
 
 /* ---------- exports ---------- */
 function dl(blob,name){const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download=name;a.click();URL.revokeObjectURL(u);}
-function exportCSV(){
-  const rows=state.calls;
-  const cols=['started_at','call_sid','source','caller','duration_seconds','language','status','booking_created','gemini_cost_usd','twilio_price_usd','total_cost_usd'];
-  const lines=[cols.join(',')];
-  rows.forEach(c=>{
-    const v=[c.started_at,c.call_sid,c.source,c.caller,c.duration_seconds,c.language,c.status,c.booking_created,c.gemini_cost_usd,(c.twilio||{}).price_usd,c.total_cost_usd];
-    lines.push(v.map(x=>{x=x==null?'':String(x);return /[",\\n]/.test(x)?'"'+x.replace(/"/g,'""')+'"':x;}).join(','));
-  });
-  dl(new Blob([lines.join('\\n')],{type:'text/csv'}),'call_logs.csv');
+async function exportCSV(){
+  /* Server-side export so the CSV carries outcome labels + attempts; same filters as the grid. */
+  try{const blob=await api('/api/admin/calls.csv'+filterQS()).then(r=>r.blob());
+    dl(blob,'call_logs.csv');
+  }catch(e){if(e.message!=='unauthorized')toast('Export failed','error');}
 }
 async function refreshCosts(){
   toast('Refreshing Twilio prices…','info');
@@ -1381,17 +1377,26 @@ async def admin_calls_csv(request: Request):
     filters = _filters_from_request(request)
     filters["limit"] = None
     data = await store.list_calls(filters)
+    attempts = eo_db.attempts_by_campaign_phone(
+        [(c.get("campaign_id"), c.get("caller")) for c in data["items"]
+         if c.get("campaign_id") and c.get("caller")])
     buf = io.StringIO()
+    # `outcome` is the display label ("Interested"/"Voicemail"…), not the raw yes/no enum;
+    # `attempts` = the campaign recipient's dial count (first dial + retries).
     cols = ["started_at", "call_sid", "source", "caller", "duration_seconds",
-            "language", "status", "booking_created", "gemini_cost_usd",
+            "language", "status", "outcome", "attempts", "gemini_cost_usd",
             "twilio_price_usd", "total_cost_usd", "cost_estimated"]
     writer = csv.writer(buf)
     writer.writerow(cols)
     for c in data["items"]:
+        cid, phone = c.get("campaign_id"), c.get("caller")
+        outcome = (eo_api._rsvp_label(c.get("rsvp_outcome_status"))
+                   or ("Interested" if c.get("booking_created") else None))
         writer.writerow([
             c.get("started_at"), c.get("call_sid"), c.get("source"), c.get("caller"),
             c.get("duration_seconds"), c.get("language"), c.get("status"),
-            c.get("booking_created"), c.get("gemini_cost_usd"),
+            outcome, attempts.get((int(cid), str(phone))) if cid and phone else None,
+            c.get("gemini_cost_usd"),
             (c.get("twilio") or {}).get("price_usd"), c.get("total_cost_usd"),
             c.get("cost_estimated"),
         ])

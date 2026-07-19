@@ -458,11 +458,13 @@ async def eo_calls_csv(request: Request):
     items = _label_and_strip(data["items"], include_cost)
     attempts = eo_db.attempts_by_campaign_phone(
         [(c["campaign_id"], c["caller"]) for c in items if c.get("campaign_id") and c.get("caller")])
-    # Per-person talk time across every call in this export (all attempts summed).
+    # Per-person talk time across every call in this export: each call rounds UP to a
+    # full minute first (telecom billing style — a 14s call counts as 60s), then sums.
     totals = {}
     for c in items:
         key = (c.get("campaign_id"), c.get("caller"))
-        totals[key] = totals.get(key, 0) + int(c.get("duration_seconds") or 0)
+        d = int(c.get("duration_seconds") or 0)
+        totals[key] = totals.get(key, 0) + ((d + 59) // 60) * 60
     buf = io.StringIO()
     # Mirrors the grid: Outcome is the display label ("Interested"/"Voicemail"…), never the
     # raw yes/no enum; Attempts = the recipient's dial count (first dial + retries).

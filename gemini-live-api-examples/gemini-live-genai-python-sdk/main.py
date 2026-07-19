@@ -1380,11 +1380,13 @@ async def admin_calls_csv(request: Request):
     attempts = eo_db.attempts_by_campaign_phone(
         [(c.get("campaign_id"), c.get("caller")) for c in data["items"]
          if c.get("campaign_id") and c.get("caller")])
-    # Per-person talk time across every call in this export (all attempts summed).
+    # Per-person talk time across every call in this export: each call rounds UP to a
+    # full minute first (telecom billing style — a 14s call counts as 60s), then sums.
     totals = {}
     for c in data["items"]:
         key = (c.get("campaign_id"), c.get("caller"))
-        totals[key] = totals.get(key, 0) + int(c.get("duration_seconds") or 0)
+        d = int(c.get("duration_seconds") or 0)
+        totals[key] = totals.get(key, 0) + ((d + 59) // 60) * 60
     buf = io.StringIO()
     # `outcome` is the display label ("Interested"/"Voicemail"…), not the raw yes/no enum;
     # `attempts` = the campaign recipient's dial count (first dial + retries).
